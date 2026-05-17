@@ -12,10 +12,15 @@ class DummySettings:
 class DummyQueue:
     def __init__(self) -> None:
         self.calls = []
+        self.reply_updates = []
 
     def enqueue_summarize_video(self, **kwargs):
         self.calls.append(kwargs)
         return type("Job", (), {"id": 7})()
+
+    def update_reply_message_id(self, job_id: int, *, reply_message_id: int):
+        self.reply_updates.append((job_id, reply_message_id))
+        return type("Job", (), {"id": job_id})()
 
 
 class DummyWatchRepository:
@@ -66,6 +71,7 @@ def test_enqueue_job_uses_queue_and_formats_reply() -> None:
             "requested_by": "42",
             "source": "discord_message",
             "reply_channel_id": 999,
+            "reply_message_id": None,
         }
     ]
     assert bot._queued_text(7, "https://www.youtube.com/watch?v=abc123xyz") == (

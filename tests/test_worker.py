@@ -23,8 +23,11 @@ class FakeChannel:
     def __init__(self) -> None:
         self.messages = []
 
-    async def send(self, content=None, file=None):
-        self.messages.append((content, file))
+    def get_partial_message(self, message_id: int):
+        return f"partial:{message_id}"
+
+    async def send(self, content=None, file=None, reference=None, mention_author=None):
+        self.messages.append((content, file, reference, mention_author))
 
 
 class FakeDiscordClient:
@@ -57,6 +60,7 @@ def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
         requested_by="youtube-channel-scheduler",
         source="youtube_channel_scheduler",
         reply_channel_id=subscription.discord_channel_id,
+        reply_message_id=2222,
     )
     repository.record_discovered_video(
         subscription_id=subscription.id,
@@ -110,6 +114,8 @@ def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
     assert discovered[0].learning_record_id == 77
     assert channel.messages[0][0] == f"Done for job #{job.id}: Demo"
     assert channel.messages[0][1] is not None
+    assert channel.messages[0][2] == "partial:2222"
+    assert channel.messages[0][3] is False
 
 
 def run_async(awaitable):

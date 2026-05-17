@@ -60,6 +60,13 @@ class Job:
             return None
         return int(raw)
 
+    @property
+    def reply_message_id(self) -> int | None:
+        raw = self.input_data.get("reply_message_id")
+        if raw is None:
+            return None
+        return int(raw)
+
 
 class JobQueue:
     def __init__(self, db_path: Path) -> None:
@@ -74,12 +81,14 @@ class JobQueue:
         requested_by: str,
         source: str,
         reply_channel_id: int | None,
+        reply_message_id: int | None = None,
         priority: int = 0,
     ) -> Job:
         created_at = utc_now()
         input_data = {
             "video_url": video_url,
             "reply_channel_id": reply_channel_id,
+            "reply_message_id": reply_message_id,
         }
         with self._connect() as conn:
             cursor = conn.execute(
@@ -173,6 +182,21 @@ class JobQueue:
                 WHERE id = ?
                 """,
                 (STATUS_FAILED, _serialize_timestamp(finished_at), error, job_id),
+            )
+        return self.get_job(job_id)
+
+    def update_reply_message_id(self, job_id: int, *, reply_message_id: int) -> Job:
+        job = self.get_job(job_id)
+        input_data = dict(job.input_data)
+        input_data["reply_message_id"] = reply_message_id
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET input_json = ?
+                WHERE id = ?
+                """,
+                (json.dumps(input_data), job_id),
             )
         return self.get_job(job_id)
 

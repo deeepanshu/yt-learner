@@ -131,9 +131,12 @@ class WorkerService:
             result.output_path,
             type(channel).__name__,
         )
+        reference = self._notification_reference(job, channel)
         await channel.send(
             content=f"{prefix} for job #{job.id}: {result.title}",
             file=discord.File(result.output_path),
+            reference=reference,
+            mention_author=False,
         )
 
     async def _notify_failure(self, job: Job) -> None:
@@ -142,7 +145,11 @@ class WorkerService:
             LOGGER.info("worker_failure_notification_skipped job_id=%s reason=no_channel", job.id)
             return
         LOGGER.info("worker_failure_notification_started job_id=%s channel_type=%s", job.id, type(channel).__name__)
-        await channel.send(f"Job #{job.id} failed: {job.error}")
+        await channel.send(
+            f"Job #{job.id} failed: {job.error}",
+            reference=self._notification_reference(job, channel),
+            mention_author=False,
+        )
 
     async def _safe_notify_success(self, job: Job, result: ProcessedVideo) -> None:
         try:
@@ -169,6 +176,11 @@ class WorkerService:
             LOGGER.exception("Unable to fetch fallback user for job %s", job.id)
             return None
         return user
+
+    def _notification_reference(self, job: Job, channel):
+        if job.reply_message_id is None or not hasattr(channel, "get_partial_message"):
+            return None
+        return channel.get_partial_message(job.reply_message_id)
 
     def _error_text(self, exc: Exception) -> str:
         if isinstance(exc, TranscriptUnavailableError):

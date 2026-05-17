@@ -104,6 +104,8 @@ class LearnerBot(discord.Client):
                 reply_channel_id=getattr(interaction.channel, "id", None),
             )
             await interaction.response.send_message(self._queued_text(job.id, parsed.canonical_url))
+            response_message = await interaction.original_response()
+            self.queue.update_reply_message_id(job.id, reply_message_id=response_message.id)
 
         watch_group = app_commands.Group(name="watch", description="Manage watched YouTube channels")
 
@@ -385,12 +387,14 @@ class LearnerBot(discord.Client):
         requested_by: str,
         source: str,
         reply_channel_id: int | None,
+        reply_message_id: int | None = None,
     ) -> object:
         job = self.queue.enqueue_summarize_video(
             video_url=video_url,
             requested_by=requested_by,
             source=source,
             reply_channel_id=reply_channel_id,
+            reply_message_id=reply_message_id,
         )
         LOGGER.info(
             "job_enqueued job_id=%s source=%s requested_by=%s reply_channel_id=%s video_url=%s",

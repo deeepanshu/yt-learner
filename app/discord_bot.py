@@ -12,25 +12,36 @@ from app.extractor import LearningExtractor
 from app.job_queue import JobQueue
 from app.pipeline import VideoProcessor
 from app.storage import OutputStore
+from app.telemetry import NoopTelemetry, configure_telemetry
 from app.youtube_urls import InvalidYouTubeUrl, parse_youtube_url
 YOUTUBE_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)/\S+")
 
 
 class LearnerBot(discord.Client):
-    def __init__(self, *, settings: Settings, queue: JobQueue) -> None:
+    def __init__(self, *, settings: Settings, queue: JobQueue, telemetry=None) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(intents=intents)
         self.settings = settings
         self.queue = queue
+        self.telemetry = telemetry or NoopTelemetry()
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self) -> None:
         @self.tree.command(name="learn", description="Process a YouTube video into learning notes")
         @app_commands.describe(url="A YouTube video URL")
         async def learn(interaction: discord.Interaction, url: str) -> None:
-            if not self._is_allowed_user(interaction.user.id):
-                await interaction.response.send_message("Unauthorized.", ephemeral=True)
+            if not self._is_allowed_interaction(interaction):
+                await interaction.response.send_message(
+                    "This bot only accepts requests from the server.",
+                    ephemeral=True,
+                )
+                return
+            if not self._is_allowed_location(interaction.channel):
+                await interaction.response.send_message(
+                    "This bot is not enabled in this channel.",
+                    ephemeral=True,
+                )
                 return
 
             try:
@@ -55,7 +66,7 @@ class LearnerBot(discord.Client):
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
             return
-        if not self._is_allowed_user(message.author.id):
+        if not self._is_allowed_message(message):
             return
         if not self._is_allowed_location(message.channel):
             return
@@ -77,8 +88,11 @@ class LearnerBot(discord.Client):
         )
         await message.channel.send(self._queued_text(job.id, parsed.canonical_url))
 
-    def _is_allowed_user(self, user_id: int) -> bool:
-        return str(user_id) == self.settings.discord_allowed_user_id
+    def _is_allowed_interaction(self, interaction: discord.Interaction) -> bool:
+        return interaction.guild_id is not None
+
+    def _is_allowed_message(self, message: discord.Message) -> bool:
+        return message.guild is not None
 
     def _is_allowed_location(self, channel: discord.abc.Messageable) -> bool:
         channel_id = getattr(channel, "id", None)
@@ -94,19 +108,21 @@ class LearnerBot(discord.Client):
         source: str,
         reply_channel_id: int | None,
     ) -> object:
-        return self.queue.enqueue_summarize_video(
+        job = self.queue.enqueue_summarize_video(
             video_url=video_url,
             requested_by=requested_by,
             source=source,
             reply_channel_id=reply_channel_id,
         )
+        self.telemetry.record_job_enqueued(source=source)
+        return job
 
     def _queued_text(self, job_id: int, url: str) -> str:
         return f"Queued job #{job_id} for {url}"
 
 
 def build_processor(settings: Settings) -> VideoProcessor:
-    store = OutputStore(settings.discord_output_dir)
+    store = OutputStore(settings.discord_output_dir, settings.db_path)
     extractor = LearningExtractor(
         api_key=settings.openai_api_key,
         model=settings.openai_model,
@@ -115,9 +131,9 @@ def build_processor(settings: Settings) -> VideoProcessor:
     return VideoProcessor(store=store, extractor=extractor)
 
 
-def build_bot(settings: Settings) -> LearnerBot:
+def build_bot(settings: Settings, telemetry=None) -> LearnerBot:
     queue = JobQueue(settings.db_path)
-    return LearnerBot(settings=settings, queue=queue)
+    return LearnerBot(settings=settings, queue=queue, telemetry=telemetry)
 
 
 def extract_youtube_url(message_content: str) -> str | None:
@@ -145,7 +161,7 @@ def main() -> int:
         print("Configuration looks valid.")
         return 0
 
-    bot = build_bot(settings)
+    bot = build_bot(settings, configure_telemetry("yt-learner-discord"))
     bot.run(settings.discord_bot_token)
     return 0
 

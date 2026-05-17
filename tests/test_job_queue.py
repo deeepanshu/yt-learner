@@ -38,11 +38,12 @@ def test_mark_done_and_failed(tmp_path) -> None:
     )
 
     queue.claim_next_job()
-    done = queue.mark_done(first.id, result_path="/tmp/result.md")
+    done = queue.mark_done(first.id, learning_record_id=12, result_path="/tmp/result.md")
     queue.claim_next_job()
     failed = queue.mark_failed(second.id, error="boom")
 
     assert done.status == STATUS_DONE
+    assert done.learning_record_id == 12
     assert done.result_path == "/tmp/result.md"
     assert failed.status == STATUS_FAILED
     assert failed.error == "boom"

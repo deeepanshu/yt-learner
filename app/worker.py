@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import time
 
 import discord
 
@@ -11,6 +12,7 @@ from app.discord_bot import build_processor
 from app.extractor import ExtractionError
 from app.job_queue import Job, JobQueue
 from app.pipeline import ProcessedVideo, VideoProcessor
+from app.telemetry import NoopTelemetry, configure_telemetry
 from app.transcript import TranscriptFetchError, TranscriptUnavailableError, UnsupportedVideoError
 
 LOGGER = logging.getLogger(__name__)
@@ -24,26 +26,45 @@ class WorkerService:
         queue: JobQueue,
         processor: VideoProcessor,
         discord_client: discord.Client,
+        telemetry=None,
     ) -> None:
         self.settings = settings
         self.queue = queue
         self.processor = processor
         self.discord_client = discord_client
+        self.telemetry = telemetry or NoopTelemetry()
 
     async def run_next_job(self) -> Job | None:
         job = self.queue.claim_next_job()
         if job is None:
             return None
 
+        started = time.perf_counter()
         try:
             result = await self.processor.process_video(job.video_url, requested_by=job.requested_by)
         except Exception as exc:
             failed_job = self.queue.mark_failed(job.id, error=self._error_text(exc))
+            self.telemetry.record_job_processed(
+                source=job.source,
+                status="failed",
+                duration_seconds=time.perf_counter() - started,
+                error_type=type(exc).__name__,
+            )
             await self._safe_notify_failure(failed_job)
             self._log_failure(job, exc)
             return failed_job
 
-        done_job = self.queue.mark_done(job.id, result_path=str(result.output_path))
+        done_job = self.queue.mark_done(
+            job.id,
+            learning_record_id=result.learning_record_id,
+            result_path=str(result.output_path),
+        )
+        self.telemetry.record_job_processed(
+            source=job.source,
+            status="done",
+            duration_seconds=time.perf_counter() - started,
+            reused_existing=result.reused_existing,
+        )
         await self._safe_notify_success(done_job, result)
         return done_job
 
@@ -143,11 +164,13 @@ def main() -> int:
 
     if args.run_once:
         client = discord.Client(intents=discord.Intents.none())
+        telemetry = configure_telemetry("yt-learner-worker")
         service = WorkerService(
             settings=settings,
             queue=queue,
             processor=processor,
             discord_client=client,
+            telemetry=telemetry,
         )
 
         async def _run_once() -> None:
@@ -167,6 +190,7 @@ def main() -> int:
             queue=queue,
             processor=processor,
             discord_client=None,  # type: ignore[arg-type]
+            telemetry=configure_telemetry("yt-learner-worker"),
         )
     )
     bot.service.discord_client = bot

@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 class Settings:
     openai_api_key: str
     discord_bot_token: str
-    discord_allowed_user_id: str
+    discord_allowed_user_id: str | None
     discord_output_dir: Path
     db_path: Path
     openai_model: str = "gpt-4o-mini"
@@ -43,7 +43,7 @@ def load_settings() -> Settings:
     return Settings(
         openai_api_key=_required("OPENAI_API_KEY"),
         discord_bot_token=_required("DISCORD_BOT_TOKEN"),
-        discord_allowed_user_id=_required("DISCORD_ALLOWED_USER_ID"),
+        discord_allowed_user_id=os.getenv("DISCORD_ALLOWED_USER_ID", "").strip() or None,
         discord_output_dir=output_dir,
         db_path=db_path,
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini",

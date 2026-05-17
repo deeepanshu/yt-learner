@@ -45,6 +45,7 @@ class Job:
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    learning_record_id: int | None
     result_path: str | None
     error: str | None
 
@@ -149,16 +150,16 @@ class JobQueue:
             conn.commit()
         return self.get_job(int(row["id"]))
 
-    def mark_done(self, job_id: int, *, result_path: str) -> Job:
+    def mark_done(self, job_id: int, *, learning_record_id: int, result_path: str) -> Job:
         finished_at = utc_now()
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE jobs
-                SET status = ?, finished_at = ?, result_path = ?, error = NULL
+                SET status = ?, finished_at = ?, learning_record_id = ?, result_path = ?, error = NULL
                 WHERE id = ?
                 """,
-                (STATUS_DONE, _serialize_timestamp(finished_at), result_path, job_id),
+                (STATUS_DONE, _serialize_timestamp(finished_at), learning_record_id, result_path, job_id),
             )
         return self.get_job(job_id)
 
@@ -196,11 +197,18 @@ class JobQueue:
                     created_at TEXT NOT NULL,
                     started_at TEXT,
                     finished_at TEXT,
+                    learning_record_id INTEGER,
                     result_path TEXT,
                     error TEXT
                 )
                 """
             )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+            }
+            if "learning_record_id" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN learning_record_id INTEGER")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_jobs_status_priority_id ON jobs(status, priority DESC, id ASC)"
             )
@@ -218,6 +226,7 @@ class JobQueue:
             created_at=_parse_timestamp(row["created_at"]) or utc_now(),
             started_at=_parse_timestamp(row["started_at"]),
             finished_at=_parse_timestamp(row["finished_at"]),
+            learning_record_id=row["learning_record_id"],
             result_path=row["result_path"],
             error=row["error"],
         )

@@ -5,7 +5,7 @@ from app.discord_bot import LearnerBot, extract_youtube_url
 
 @dataclass
 class DummySettings:
-    discord_allowed_user_id: str = "42"
+    discord_allowed_user_id: str | None = None
     allowed_channel_id: str | None = None
 
 
@@ -55,3 +55,17 @@ def test_enqueue_job_uses_queue_and_formats_reply() -> None:
     assert bot._queued_text(7, "https://www.youtube.com/watch?v=abc123xyz") == (
         "Queued job #7 for https://www.youtube.com/watch?v=abc123xyz"
     )
+
+
+def test_server_scoped_auth_helpers() -> None:
+    bot = LearnerBot(settings=DummySettings(), queue=DummyQueue())
+
+    guild_message = type("Message", (), {"guild": object()})()
+    dm_message = type("Message", (), {"guild": None})()
+    guild_interaction = type("Interaction", (), {"guild_id": 123, "channel": object()})()
+    dm_interaction = type("Interaction", (), {"guild_id": None, "channel": object()})()
+
+    assert bot._is_allowed_message(guild_message) is True
+    assert bot._is_allowed_message(dm_message) is False
+    assert bot._is_allowed_interaction(guild_interaction) is True
+    assert bot._is_allowed_interaction(dm_interaction) is False

@@ -12,6 +12,7 @@ from app.youtube_urls import parse_youtube_url
 
 @dataclass(frozen=True)
 class ProcessedVideo:
+    learning_record_id: int
     video_id: str
     title: str
     url: str
@@ -33,14 +34,17 @@ class VideoProcessor:
 
     async def process_video(self, video_url: str, requested_by: str) -> ProcessedVideo:
         parsed = parse_youtube_url(video_url)
-        existing = self.store.find_existing(parsed.video_id)
+        existing = self.store.find_existing_learning_record(
+            source_type="youtube_url",
+            source_key=parsed.video_id,
+        )
         if existing is not None:
-            existing_title = self.store.read_markdown_title(existing) or existing.stem
             return ProcessedVideo(
+                learning_record_id=existing.id,
                 video_id=parsed.video_id,
-                title=existing_title,
+                title=existing.title,
                 url=parsed.canonical_url,
-                output_path=existing,
+                output_path=existing.artifact_path,
                 reused_existing=True,
             )
 
@@ -65,9 +69,12 @@ class VideoProcessor:
         stored = self.store.save_markdown(
             title=title,
             video_id=parsed.video_id,
+            source_url=parsed.canonical_url,
             markdown=markdown,
+            requested_by=requested_by,
         )
         return ProcessedVideo(
+            learning_record_id=stored.learning_record_id,
             video_id=parsed.video_id,
             title=title,
             url=parsed.canonical_url,

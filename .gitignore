@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 outputs/*.md
 outputs/*.txt
+data/*.sqlite3

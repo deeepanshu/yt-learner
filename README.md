@@ -1,6 +1,6 @@
 # yt-learner
 
-Discord-first MVP for turning a YouTube URL into structured markdown learning notes.
+Discord-first MVP for turning YouTube URLs and watched YouTube channel uploads into structured markdown learning notes.
 
 ## Setup
 
@@ -14,18 +14,19 @@ Discord-first MVP for turning a YouTube URL into structured markdown learning no
 
 ## Runtime Model
 
-The app now runs as two long-lived processes:
+The app runs as two long-lived processes:
 
 - `yt-learner-discord`: accepts Discord messages and slash commands, validates input, and enqueues jobs
-- `yt-learner-worker`: claims queued jobs from SQLite, runs the extraction pipeline, and posts the result back to Discord
+- `yt-learner-worker`: claims queued jobs from SQLite, polls watched YouTube channels for new uploads, runs the extraction pipeline, and posts the result back to Discord
 
-Both services should be running in normal deployment. If only the bot is running, jobs will queue but never complete.
+Both services should be running in normal deployment. If only the bot is running, jobs will queue but never complete. If only the worker is running, watched channels will continue polling, but you will not be able to add or remove watches from Discord.
 
 Access policy:
 
-- anyone in a server where the bot is installed can use it
+- anyone in a server where the bot is installed can use `/learn` or plain YouTube URL messages
 - direct messages to the bot are ignored
-- if `DISCORD_ALLOWED_CHANNEL_ID` is set, requests are limited to that one channel
+- if `DISCORD_ALLOWED_CHANNEL_ID` is set, manual learning requests are limited to that one channel
+- watched channel management is server-only and requires Discord `Manage Server` permission
 
 ## Environment
 
@@ -42,9 +43,31 @@ Optional values:
 - `OPENAI_MODEL`
 - `DISCORD_ALLOWED_CHANNEL_ID`
 - `YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS`
+- `YOUTUBE_SCHEDULER_POLL_INTERVAL_SECONDS`
 - `OTEL_EXPORTER_OTLP_ENDPOINT`
 - `OTEL_EXPORTER_OTLP_PROTOCOL`
 - `OTEL_RESOURCE_ATTRIBUTES`
+
+## Watched Channels
+
+Use Discord slash commands to manage watched YouTube channels:
+
+- `/watch add <youtube_channel> <discord_channel>`
+- `/watch list`
+- `/watch remove <youtube_channel_or_watch_id>`
+
+Behavior:
+
+- the first sync for a newly watched YouTube channel is bootstrap-only and does not backfill existing uploads
+- later uploads are discovered from the YouTube channel feed and enqueued once
+- discovered video ids are stored in SQLite, so restarts do not re-enqueue the same upload
+- each watched YouTube channel has its own Discord destination, and multiple watched channels may share the same destination
+
+Supported watch inputs:
+
+- `https://www.youtube.com/channel/<channel_id>`
+- `@handle`
+- raw YouTube channel ids that start with `UC`
 
 ## Observability
 
@@ -76,7 +99,8 @@ The bot exports job enqueue counts. The worker exports job completion/failure co
 - Run tests with `uv run pytest`.
 - Add dependencies with `uv add <package>`.
 - Add dev dependencies with `uv add --dev <package>`.
-- Run the bot locally with `make run`.
+- Run both bot and worker locally with `make run-all`.
+- Run the bot locally with `make run-bot`.
 - Run the worker locally with `make run-worker`.
 
 ## Service Management
@@ -100,21 +124,23 @@ You can also target one service at a time:
 
 ## Deployment
 
-- The included [yt-learner-discord.service](/home/deepanshu/projects/yt-learner/yt-learner-discord.service:1) and [yt-learner-worker.service](/home/deepanshu/projects/yt-learner/yt-learner-worker.service:1) units assume the project lives at `/home/pi/yt-learner`.
+- The included [yt-learner-discord.service](/home/deepanshu/projects/yt-learner/.worktrees/channel-scheduler/yt-learner-discord.service:1) and [yt-learner-worker.service](/home/deepanshu/projects/yt-learner/.worktrees/channel-scheduler/yt-learner-worker.service:1) units assume the project lives at `/home/pi/yt-learner`.
 - Update `WorkingDirectory` or the `uv` path in that unit if your Raspberry Pi uses a different layout.
-- The repo includes [scripts/service.sh](/home/deepanshu/projects/yt-learner/scripts/service.sh:1) as a thin wrapper around the `systemd` commands for both services.
+- The repo includes [scripts/service.sh](/home/deepanshu/projects/yt-learner/.worktrees/channel-scheduler/scripts/service.sh:1) as a thin wrapper around the `systemd` commands for both services.
 
 ## Current Scope
 
-- Manual YouTube URL processing through Discord messages or `/learn`.
-- SQLite-backed durable job queue in `app.job_queue`.
-- Separate worker execution in `app.worker`.
-- Shared processing pipeline in `app.pipeline`.
-- Local markdown output in `outputs/`.
+- Manual YouTube URL processing through Discord messages or `/learn`
+- Watched YouTube channel scheduling through `/watch`
+- SQLite-backed durable job queue in `app.job_queue`
+- SQLite-backed watch and discovered-video persistence
+- Separate worker execution in `app.worker`
+- Shared processing pipeline in `app.pipeline`
+- Local markdown output in `outputs/`
 
 ## Notes
 
 - Existing markdown files are reused by video ID.
 - If transcript fetch succeeds but OpenAI extraction fails, the transcript is saved locally as a debug artifact.
-- Discord now replies immediately with a queued job ID; the worker posts the completion or failure message later.
-- Channel watching is not implemented yet.
+- Discord replies immediately with a queued job ID for manual requests; the worker posts the completion or failure message later.
+- Channel watches use public YouTube feeds in v1 and do not require a YouTube Data API key.

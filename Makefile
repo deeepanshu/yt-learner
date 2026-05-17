@@ -1,4 +1,4 @@
-.PHONY: sync test check run run-worker \
+.PHONY: sync test check run-bot run-worker run-all \
 	service-install service-restart service-status service-logs service-stop \
 	service-install-bot service-restart-bot service-status-bot service-logs-bot service-stop-bot \
 	service-install-worker service-restart-worker service-status-worker service-logs-worker service-stop-worker
@@ -12,11 +12,14 @@ test:
 check:
 	./scripts/service.sh check
 
-run:
+run-bot:
 	uv run yt-learner-discord
 
 run-worker:
 	uv run yt-learner-worker
+
+run-all:
+	(sh -c 'trap "kill 0" INT TERM EXIT; $(MAKE) run-bot & $(MAKE) run-worker & wait')
 
 service-install:
 	./scripts/service.sh install all

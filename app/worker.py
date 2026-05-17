@@ -7,11 +7,13 @@ import time
 
 import discord
 
+from app.channel_watches import WatchRepository
 from app.config import Settings, load_settings
 from app.discord_bot import build_processor
 from app.extractor import ExtractionError
 from app.job_queue import Job, JobQueue
 from app.pipeline import ProcessedVideo, VideoProcessor
+from app.scheduler import ChannelScheduler
 from app.telemetry import NoopTelemetry, configure_telemetry
 from app.transcript import TranscriptFetchError, TranscriptUnavailableError, UnsupportedVideoError
 
@@ -26,18 +28,29 @@ class WorkerService:
         queue: JobQueue,
         processor: VideoProcessor,
         discord_client: discord.Client,
+        scheduler: ChannelScheduler | None = None,
         telemetry=None,
     ) -> None:
         self.settings = settings
         self.queue = queue
         self.processor = processor
         self.discord_client = discord_client
+        self.scheduler = scheduler
         self.telemetry = telemetry or NoopTelemetry()
 
     async def run_next_job(self) -> Job | None:
         job = self.queue.claim_next_job()
         if job is None:
             return None
+        LOGGER.info(
+            "worker_job_claimed job_id=%s source=%s requested_by=%s reply_channel_id=%s video_url=%s attempt=%s",
+            job.id,
+            job.source,
+            job.requested_by,
+            job.reply_channel_id,
+            job.video_url,
+            job.attempts,
+        )
 
         started = time.perf_counter()
         try:
@@ -52,6 +65,14 @@ class WorkerService:
             )
             await self._safe_notify_failure(failed_job)
             self._log_failure(job, exc)
+            LOGGER.info(
+                "worker_job_failed job_id=%s source=%s error_type=%s user_message=%r duration_seconds=%.3f",
+                job.id,
+                job.source,
+                type(exc).__name__,
+                failed_job.error,
+                time.perf_counter() - started,
+            )
             return failed_job
 
         done_job = self.queue.mark_done(
@@ -59,18 +80,41 @@ class WorkerService:
             learning_record_id=result.learning_record_id,
             result_path=str(result.output_path),
         )
+        if self.scheduler is not None:
+            self.scheduler.watch_repository.mark_video_indexed_by_job(
+                queued_job_id=job.id,
+                learning_record_id=result.learning_record_id,
+            )
         self.telemetry.record_job_processed(
             source=job.source,
             status="done",
             duration_seconds=time.perf_counter() - started,
             reused_existing=result.reused_existing,
         )
+        LOGGER.info(
+            "worker_job_done job_id=%s source=%s learning_record_id=%s reused_existing=%s output_path=%s duration_seconds=%.3f",
+            job.id,
+            job.source,
+            result.learning_record_id,
+            result.reused_existing,
+            result.output_path,
+            time.perf_counter() - started,
+        )
         await self._safe_notify_success(done_job, result)
         return done_job
 
     async def run_forever(self, *, poll_interval_seconds: float = 2.0) -> None:
         await self.discord_client.wait_until_ready()
+        next_scheduler_poll = 0.0
         while not self.discord_client.is_closed():
+            now = time.monotonic()
+            if self.scheduler is not None and now >= next_scheduler_poll:
+                LOGGER.info(
+                    "worker_scheduler_poll_due poll_interval_seconds=%s",
+                    self.settings.scheduler_poll_interval_seconds,
+                )
+                await self.scheduler.poll_once()
+                next_scheduler_poll = now + float(self.settings.scheduler_poll_interval_seconds)
             job = await self.run_next_job()
             if job is None:
                 await asyncio.sleep(poll_interval_seconds)
@@ -78,8 +122,15 @@ class WorkerService:
     async def _notify_success(self, job: Job, result: ProcessedVideo) -> None:
         channel = await self._resolve_channel(job)
         if channel is None:
+            LOGGER.info("worker_success_notification_skipped job_id=%s reason=no_channel", job.id)
             return
         prefix = "Reused existing notes" if result.reused_existing else "Done"
+        LOGGER.info(
+            "worker_success_notification_started job_id=%s attachment_path=%s channel_type=%s",
+            job.id,
+            result.output_path,
+            type(channel).__name__,
+        )
         await channel.send(
             content=f"{prefix} for job #{job.id}: {result.title}",
             file=discord.File(result.output_path),
@@ -88,7 +139,9 @@ class WorkerService:
     async def _notify_failure(self, job: Job) -> None:
         channel = await self._resolve_channel(job)
         if channel is None:
+            LOGGER.info("worker_failure_notification_skipped job_id=%s reason=no_channel", job.id)
             return
+        LOGGER.info("worker_failure_notification_started job_id=%s channel_type=%s", job.id, type(channel).__name__)
         await channel.send(f"Job #{job.id} failed: {job.error}")
 
     async def _safe_notify_success(self, job: Job, result: ProcessedVideo) -> None:
@@ -161,6 +214,12 @@ def main() -> int:
     settings = load_settings()
     queue = JobQueue(settings.db_path)
     processor = build_processor(settings)
+    watch_repository = WatchRepository(settings.db_path)
+    scheduler = ChannelScheduler(
+        watch_repository=watch_repository,
+        queue=queue,
+        store=processor.store,
+    )
 
     if args.run_once:
         client = discord.Client(intents=discord.Intents.none())
@@ -170,6 +229,7 @@ def main() -> int:
             queue=queue,
             processor=processor,
             discord_client=client,
+            scheduler=scheduler,
             telemetry=telemetry,
         )
 
@@ -190,6 +250,7 @@ def main() -> int:
             queue=queue,
             processor=processor,
             discord_client=None,  # type: ignore[arg-type]
+            scheduler=scheduler,
             telemetry=configure_telemetry("yt-learner-worker"),
         )
     )

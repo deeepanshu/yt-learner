@@ -120,6 +120,16 @@ discord_bot.py
   - allowed user check
         |
         v
+job_queue.py
+  - create SQLite job
+  - return job ID quickly
+        |
+        v
+worker.py
+  - claim queued job
+  - retry failed job when appropriate
+        |
+        v
 pipeline.py
   - parse video ID
   - dedupe/reuse existing output if present
@@ -134,11 +144,13 @@ pipeline.py
         |
         v
 Discord response
-  - status text
+  - queued/processing/done status text
   - markdown attachment
 ```
 
-The important design rule: both invocation paths call the same `process_video(...)` function. Discord-specific behavior should stay in the Discord adapter, not inside the extraction pipeline.
+The important design rule: both invocation paths create the same `summarize_video` job. The worker calls the same `process_video(...)` function. Discord-specific behavior should stay in the Discord adapter, queue mechanics should stay in the job layer, and learning extraction should stay in the pipeline.
+
+The queue should exist from the first implementation, but it should stay simple: one SQLite database and one local worker process. Avoid Redis, Celery, or distributed workers until the tool actually needs concurrency across machines.
 
 ---
 
@@ -148,21 +160,27 @@ The important design rule: both invocation paths call the same `process_video(..
 yt-learner/
   app/
     discord_bot.py          # Discord bot, URL listener, /learn command
+    worker.py               # Single local worker that claims queued jobs
+    job_queue.py            # SQLite-backed persistent queue
     pipeline.py             # Shared process_video(video_url, requested_by)
     youtube_urls.py         # URL parsing and video ID extraction
     transcript.py           # youtube-transcript-api wrapper
-    extractor.py            # OpenAI prompt and structured markdown generation
-    storage.py              # Output paths, dedupe checks, optional metadata JSON
+    extractor.py            # OpenAI prompt and structured JSON generation
+    renderer.py             # Convert structured extraction result to markdown
+    storage.py              # Output paths, dedupe checks, metadata, SQLite path
     config.py               # Env/config loading
   outputs/
     .gitkeep
+  data/
+    .gitkeep
   yt-learner-discord.service
+  yt-learner-worker.service
   .env.example
   README.md
   requirements.txt
 ```
 
-SQLite can be skipped in the first version. A simple output file naming convention plus optional sidecar metadata JSON is enough for the MVP.
+SQLite should be used from the first version as a persistent job queue. It keeps Discord responses fast, gives crash recovery, and creates a clean path for future ad hoc task types and channel watching.
 
 ---
 
@@ -173,6 +191,7 @@ OPENAI_API_KEY=
 DISCORD_BOT_TOKEN=
 DISCORD_ALLOWED_USER_ID=
 DISCORD_OUTPUT_DIR=/home/pi/yt-learner/outputs
+YOUTUBE_LEARNER_DB_PATH=/home/pi/yt-learner/data/yt_learner.sqlite3
 OPENAI_MODEL=gpt-4o-mini
 ```
 
@@ -187,7 +206,27 @@ YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS=
 
 ## Processing Contract
 
-Target function:
+Discord should not run video extraction inline. It should create a job and reply quickly.
+
+Job creation contract:
+
+```python
+async def enqueue_summarize_video(
+    video_url: str,
+    requested_by: str,
+    source: str,
+) -> Job:
+    ...
+```
+
+Worker contract:
+
+```python
+async def run_next_job() -> JobResult | None:
+    ...
+```
+
+Pipeline contract:
 
 ```python
 async def process_video(video_url: str, requested_by: str) -> ProcessedVideo:
@@ -202,6 +241,7 @@ class ProcessedVideo:
     video_id: str
     title: str
     url: str
+    extraction_json_path: Path
     output_path: Path
     reused_existing: bool
 ```
@@ -209,8 +249,141 @@ class ProcessedVideo:
 The Discord adapter should only care about:
 
 - what status message to send,
-- whether processing succeeded,
-- which file to attach.
+- the queued job ID,
+- whether processing succeeded or failed,
+- which file to attach when the worker finishes.
+
+---
+
+## Queue Model
+
+Use a small SQLite table as the durable queue:
+
+```text
+jobs
+- id
+- task_type
+- source
+- requested_by
+- input_json
+- status
+- priority
+- attempts
+- created_at
+- started_at
+- finished_at
+- result_path
+- error
+```
+
+Initial statuses:
+
+```text
+queued
+running
+done
+failed
+cancelled
+```
+
+Initial task type:
+
+```text
+summarize_video
+```
+
+Likely future task types:
+
+```text
+extract_action_items
+make_flashcards
+explain_concepts
+summarize_channel_video
+compare_two_videos
+```
+
+Initial execution model:
+
+```text
+Discord command/message
+  -> validate user
+  -> parse YouTube URL enough to reject obvious invalid input
+  -> insert queued job
+  -> reply "Queued"
+
+Worker loop
+  -> claim oldest queued job
+  -> run task handler
+  -> save structured JSON and rendered markdown
+  -> update job as done/failed
+  -> send Discord completion message with attachment
+```
+
+This is intentionally not a large queue system. SQLite is enough for one Raspberry Pi, one user, and jobs that can take minutes.
+
+---
+
+## Summarization Contract
+
+Do not ask the model to directly write final markdown as the only source of truth. Ask it to return structured JSON first, then render markdown locally. This keeps outputs consistent and makes it easier to add future ad hoc task types.
+
+Suggested extraction JSON shape:
+
+```json
+{
+  "title": "Video title",
+  "source_url": "https://youtube.com/watch?v=...",
+  "channel": "Channel name",
+  "duration_seconds": 3600,
+  "tldr": [
+    "Main idea 1",
+    "Main idea 2"
+  ],
+  "why_it_matters": "Short explanation of why this video is useful.",
+  "topics": [
+    {
+      "start_seconds": 0,
+      "title": "Topic name",
+      "summary": "What this section explains.",
+      "key_points": [
+        "Important detail",
+        "Practical takeaway"
+      ]
+    }
+  ],
+  "key_concepts": [
+    {
+      "term": "Concept",
+      "explanation": "Short explanation."
+    }
+  ],
+  "actionable_takeaways": [
+    "Something to try",
+    "Decision or heuristic worth remembering"
+  ],
+  "questions_to_revisit": [
+    "Question worth thinking about later"
+  ],
+  "glossary": [
+    {
+      "term": "Term",
+      "definition": "Short definition."
+    }
+  ]
+}
+```
+
+For long videos, use a two-pass process:
+
+```text
+transcript
+  -> chunk by timestamp
+  -> summarize each chunk into structured JSON
+  -> merge chunk summaries into final structured JSON
+  -> render markdown
+```
+
+The merge step should preserve timestamp anchors so the final markdown can link back to the exact video positions.
 
 ---
 
@@ -228,23 +401,42 @@ Markdown structure:
 # <Video Title>
 
 Source: <YouTube URL>
+Channel: <Channel Name>
+Duration: <Duration>
 Processed: <timestamp>
 
-## Summary
+## TL;DR
 
-...
+- Main idea
+- Main idea
 
-## Topics
+## Why It Matters
 
-### <Topic> ([timestamp](https://youtube.com/watch?v=...&t=123s))
+Short explanation of why this video is useful.
+
+## Topic Map
+
+### 00:00 - <Topic> ([link](https://youtube.com/watch?v=...&t=0s))
 
 - Key point
-- Subtopic
 - Practical takeaway
+
+## Key Concepts
+
+- Concept: explanation
 
 ## Actionable Notes
 
-...
+- Thing to try
+- Tool, method, decision, or heuristic worth remembering
+
+## Good Questions To Revisit
+
+- Question
+
+## Glossary
+
+- Term: definition
 ```
 
 Timestamp links should point back to the video position.
@@ -288,19 +480,44 @@ If the transcript fetch succeeds but OpenAI fails, save the raw transcript or pa
 
 ---
 
+## Missing Decisions
+
+The core shape is clear, but these decisions should be made before or during the first implementation slice:
+
+- **Discord surface:** Use DMs only, one private server channel only, or both. DMs are simplest for personal use; a private channel gives better history and future channel-watcher output.
+- **Message permissions:** Decide whether plain URL detection is allowed everywhere the bot can see messages, or only in DMs / `DISCORD_ALLOWED_CHANNEL_ID`.
+- **Initial model:** Start with `gpt-4o-mini` for cost, but keep `OPENAI_MODEL` configurable.
+- **Long-video threshold:** Decide when to switch from single-pass extraction to chunked two-pass extraction. A practical first threshold is transcript character count.
+- **Metadata source:** Decide whether the MVP needs title/channel/duration from YouTube metadata or whether transcript-only plus video URL is acceptable for the first slice.
+- **Duplicate behavior:** Decide whether an already-processed video should resend the existing markdown immediately or create a fresh job.
+- **Queue status UX:** Decide whether Discord should only say `Queued` and `Done`, or support `status <job-id>` later.
+- **Retry policy:** Decide how many attempts a failed job gets and which errors are retryable.
+- **Cost guardrails:** Add a maximum transcript size or estimated token budget before calling OpenAI.
+- **Retention:** Decide how long to keep markdown outputs, structured JSON, raw transcripts, and failed-job debug files.
+- **Secrets setup:** Decide how `.env` is installed on the Raspberry Pi and how service logs avoid printing secrets.
+- **Observability:** Decide the minimum logs needed for debugging: job ID, video ID, status transition, duration, and error class.
+- **Local CLI fallback:** Decide whether to include a small CLI like `python -m app.cli summarize <url>` for debugging without Discord.
+
+None of these block the design. The most important ones for the MVP are Discord surface, long-video threshold, duplicate behavior, retry policy, and cost guardrails.
+
+---
+
 ## Implementation Plan
 
 1. Create `yt-learner` project skeleton.
-2. Implement YouTube URL parsing.
-3. Implement transcript fetch wrapper.
-4. Implement OpenAI markdown extractor.
-5. Implement local markdown storage.
-6. Implement Discord bot plain URL listener.
-7. Add `/learn` slash command.
-8. Add allowed user ID check.
-9. Add `.env.example`, README, and `systemd` unit.
-10. Test locally with one public YouTube video.
-11. Move to Raspberry Pi and run as a service.
+2. Implement SQLite queue schema and job helper.
+3. Implement YouTube URL parsing.
+4. Implement transcript fetch wrapper.
+5. Implement OpenAI structured JSON extractor.
+6. Implement markdown renderer.
+7. Implement local output storage.
+8. Implement worker loop for `summarize_video`.
+9. Implement Discord bot plain URL listener.
+10. Add `/learn` slash command.
+11. Add allowed user ID check.
+12. Add `.env.example`, README, and `systemd` units for bot and worker.
+13. Test locally with one public YouTube video.
+14. Move to Raspberry Pi and run as services.
 
 ---
 
@@ -318,6 +535,7 @@ Recommended implementation:
 
 - Use YouTube channel RSS feeds first, not YouTube Data API.
 - Store watched channels and processed videos in SQLite.
+- Have the watcher enqueue `summarize_channel_video` or `summarize_video` jobs instead of processing videos inline.
 - Run watcher through a `systemd` timer.
 - Post processed summaries into a configured private Discord channel.
 
@@ -336,4 +554,3 @@ systemd timer
 ## Key Decision
 
 Start with Discord manual mode only. Build the pipeline so channel watching can be added later without changing the extraction core.
-

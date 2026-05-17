@@ -71,13 +71,18 @@ Supported watch inputs:
 
 ## Observability
 
-`yt-learner` can export metrics directly to the shared OpenTelemetry collector running on the Pi.
+`yt-learner` can export metrics and logs to any OpenTelemetry-compatible collector. If you want Loki, the recommended shape is:
+
+- `yt-learner-discord` and `yt-learner-worker` emit OTLP metrics and OTLP logs
+- an OpenTelemetry Collector or Grafana Alloy receives those signals
+- the collector forwards logs to Loki and metrics to the backend you prefer
 
 Recommended entries in `/home/deepanshu/.env`:
 
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4318/v1/logs
 OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod
 ```
 
@@ -93,6 +98,14 @@ Metric names:
 - `yt_learner_worker_job_processing_duration_seconds`
 
 The bot exports job enqueue counts. The worker exports job completion/failure counts and processing duration.
+
+Logging behavior:
+
+- when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, both services continue writing normal process logs and also export them over OTLP
+- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is optional and only needed when your collector exposes logs on a different URL than the shared OTLP endpoint
+- OpenTelemetry resource attributes such as `deployment.environment=prod` are attached to both logs and metrics, which makes them usable as Loki labels after collector-side mapping
+
+The application intentionally does not talk to Loki directly. OTLP keeps the app backend-agnostic and lets the collector handle Loki-specific routing, relabeling, and buffering.
 
 ## Development
 

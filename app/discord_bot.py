@@ -13,7 +13,7 @@ from app.extractor import LearningExtractor
 from app.job_queue import JobQueue
 from app.pipeline import VideoProcessor
 from app.storage import OutputStore
-from app.telemetry import NoopTelemetry, configure_telemetry
+from app.telemetry import NoopTelemetry, configure_logging, configure_telemetry
 from app.youtube_channels import YouTubeChannelError, resolve_youtube_channel
 from app.youtube_urls import InvalidYouTubeUrl, parse_youtube_url
 
@@ -455,7 +455,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    logging.basicConfig(level=logging.INFO)
+    configure_logging("yt-learner-discord")
     settings = load_settings()
     if args.check_config:
         print("Configuration looks valid.")

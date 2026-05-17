@@ -14,7 +14,7 @@ from app.extractor import ExtractionError
 from app.job_queue import Job, JobQueue
 from app.pipeline import ProcessedVideo, VideoProcessor
 from app.scheduler import ChannelScheduler
-from app.telemetry import NoopTelemetry, configure_telemetry
+from app.telemetry import NoopTelemetry, configure_logging, configure_telemetry
 from app.transcript import TranscriptFetchError, TranscriptUnavailableError, UnsupportedVideoError
 
 LOGGER = logging.getLogger(__name__)
@@ -210,7 +210,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    logging.basicConfig(level=logging.INFO)
+    configure_logging("yt-learner-worker")
     settings = load_settings()
     queue = JobQueue(settings.db_path)
     processor = build_processor(settings)

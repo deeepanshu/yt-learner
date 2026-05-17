@@ -13,6 +13,7 @@ class Settings:
     discord_bot_token: str
     discord_allowed_user_id: str
     discord_output_dir: Path
+    db_path: Path
     openai_model: str = "gpt-4o-mini"
     allowed_channel_id: str | None = None
     max_transcript_chars: int | None = None
@@ -38,11 +39,13 @@ def _optional_int(name: str) -> int | None:
 def load_settings() -> Settings:
     load_dotenv()
     output_dir = Path(os.getenv("DISCORD_OUTPUT_DIR", "./outputs")).expanduser().resolve()
+    db_path = Path(os.getenv("YOUTUBE_LEARNER_DB_PATH", "./data/yt_learner.sqlite3")).expanduser().resolve()
     return Settings(
         openai_api_key=_required("OPENAI_API_KEY"),
         discord_bot_token=_required("DISCORD_BOT_TOKEN"),
         discord_allowed_user_id=_required("DISCORD_ALLOWED_USER_ID"),
         discord_output_dir=output_dir,
+        db_path=db_path,
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini",
         allowed_channel_id=os.getenv("DISCORD_ALLOWED_CHANNEL_ID", "").strip() or None,
         max_transcript_chars=_optional_int("YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS"),

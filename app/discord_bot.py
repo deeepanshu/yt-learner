@@ -8,23 +8,21 @@ import discord
 from discord import app_commands
 
 from app.config import Settings, load_settings
-from app.extractor import ExtractionError, LearningExtractor
-from app.pipeline import ProcessedVideo, VideoProcessor
+from app.extractor import LearningExtractor
+from app.job_queue import JobQueue
+from app.pipeline import VideoProcessor
 from app.storage import OutputStore
-from app.transcript import TranscriptFetchError, TranscriptUnavailableError, UnsupportedVideoError
-from app.youtube_urls import InvalidYouTubeUrl
-
-LOGGER = logging.getLogger(__name__)
+from app.youtube_urls import InvalidYouTubeUrl, parse_youtube_url
 YOUTUBE_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)/\S+")
 
 
 class LearnerBot(discord.Client):
-    def __init__(self, *, settings: Settings, processor: VideoProcessor) -> None:
+    def __init__(self, *, settings: Settings, queue: JobQueue) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(intents=intents)
         self.settings = settings
-        self.processor = processor
+        self.queue = queue
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self) -> None:
@@ -35,8 +33,22 @@ class LearnerBot(discord.Client):
                 await interaction.response.send_message("Unauthorized.", ephemeral=True)
                 return
 
-            await interaction.response.defer(thinking=True)
-            await self._process_and_respond(url=url, send=interaction.followup.send)
+            try:
+                parsed = parse_youtube_url(url)
+            except InvalidYouTubeUrl:
+                await interaction.response.send_message(
+                    "I could not find a supported YouTube URL in that message.",
+                    ephemeral=True,
+                )
+                return
+
+            job = self._enqueue_job(
+                video_url=parsed.canonical_url,
+                requested_by=str(interaction.user.id),
+                source="discord_slash_command",
+                reply_channel_id=getattr(interaction.channel, "id", None),
+            )
+            await interaction.response.send_message(self._queued_text(job.id, parsed.canonical_url))
 
         await self.tree.sync()
 
@@ -51,41 +63,19 @@ class LearnerBot(discord.Client):
         if matched_url is None:
             return
 
-        await message.channel.send("Processing your YouTube URL...")
-        await self._process_and_respond(url=matched_url, send=message.channel.send)
-
-    async def _process_and_respond(self, *, url: str, send) -> None:
         try:
-            result = await self.processor.process_video(url, requested_by=self.settings.discord_allowed_user_id)
+            parsed = parse_youtube_url(matched_url)
         except InvalidYouTubeUrl:
-            await send("I could not find a supported YouTube URL in that message.")
-            return
-        except TranscriptUnavailableError:
-            await send("I could not fetch an English transcript for this video.")
-            return
-        except TranscriptFetchError:
-            await send("I could not fetch the transcript right now. Please try again later.")
-            return
-        except UnsupportedVideoError:
-            await send("The video looks private, unavailable, or unsupported.")
-            return
-        except ExtractionError:
-            LOGGER.exception("OpenAI extraction failure")
-            await send("The extraction failed while calling OpenAI. The transcript was saved for debugging.")
-            return
-        except Exception:
-            LOGGER.exception("Unhandled processing failure")
-            await send("The extraction failed while calling OpenAI. Try again later.")
+            await message.channel.send("I could not find a supported YouTube URL in that message.")
             return
 
-        await send(
-            content=self._completion_text(result),
-            file=discord.File(result.output_path),
+        job = self._enqueue_job(
+            video_url=parsed.canonical_url,
+            requested_by=str(message.author.id),
+            source="discord_message",
+            reply_channel_id=getattr(message.channel, "id", None),
         )
-
-    def _completion_text(self, result: ProcessedVideo) -> str:
-        prefix = "Reused existing notes" if result.reused_existing else "Done"
-        return f"{prefix}: {result.title}"
+        await message.channel.send(self._queued_text(job.id, parsed.canonical_url))
 
     def _is_allowed_user(self, user_id: int) -> bool:
         return str(user_id) == self.settings.discord_allowed_user_id
@@ -96,16 +86,38 @@ class LearnerBot(discord.Client):
             return str(channel_id) == self.settings.allowed_channel_id
         return True
 
+    def _enqueue_job(
+        self,
+        *,
+        video_url: str,
+        requested_by: str,
+        source: str,
+        reply_channel_id: int | None,
+    ) -> object:
+        return self.queue.enqueue_summarize_video(
+            video_url=video_url,
+            requested_by=requested_by,
+            source=source,
+            reply_channel_id=reply_channel_id,
+        )
 
-def build_bot(settings: Settings) -> LearnerBot:
+    def _queued_text(self, job_id: int, url: str) -> str:
+        return f"Queued job #{job_id} for {url}"
+
+
+def build_processor(settings: Settings) -> VideoProcessor:
     store = OutputStore(settings.discord_output_dir)
     extractor = LearningExtractor(
         api_key=settings.openai_api_key,
         model=settings.openai_model,
         max_transcript_chars=settings.max_transcript_chars,
     )
-    processor = VideoProcessor(store=store, extractor=extractor)
-    return LearnerBot(settings=settings, processor=processor)
+    return VideoProcessor(store=store, extractor=extractor)
+
+
+def build_bot(settings: Settings) -> LearnerBot:
+    queue = JobQueue(settings.db_path)
+    return LearnerBot(settings=settings, queue=queue)
 
 
 def extract_youtube_url(message_content: str) -> str | None:

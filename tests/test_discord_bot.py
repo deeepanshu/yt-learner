@@ -1,4 +1,21 @@
-from app.discord_bot import extract_youtube_url
+from dataclasses import dataclass
+
+from app.discord_bot import LearnerBot, extract_youtube_url
+
+
+@dataclass
+class DummySettings:
+    discord_allowed_user_id: str = "42"
+    allowed_channel_id: str | None = None
+
+
+class DummyQueue:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def enqueue_summarize_video(self, **kwargs):
+        self.calls.append(kwargs)
+        return type("Job", (), {"id": 7})()
 
 
 def test_extract_youtube_url_from_plain_message() -> None:
@@ -13,3 +30,28 @@ def test_extract_youtube_url_from_parenthesized_message() -> None:
 
 def test_extract_youtube_url_returns_none_when_missing() -> None:
     assert extract_youtube_url("hello world") is None
+
+
+def test_enqueue_job_uses_queue_and_formats_reply() -> None:
+    queue = DummyQueue()
+    bot = LearnerBot(settings=DummySettings(), queue=queue)
+
+    job = bot._enqueue_job(
+        video_url="https://www.youtube.com/watch?v=abc123xyz",
+        requested_by="42",
+        source="discord_message",
+        reply_channel_id=999,
+    )
+
+    assert job.id == 7
+    assert queue.calls == [
+        {
+            "video_url": "https://www.youtube.com/watch?v=abc123xyz",
+            "requested_by": "42",
+            "source": "discord_message",
+            "reply_channel_id": 999,
+        }
+    ]
+    assert bot._queued_text(7, "https://www.youtube.com/watch?v=abc123xyz") == (
+        "Queued job #7 for https://www.youtube.com/watch?v=abc123xyz"
+    )

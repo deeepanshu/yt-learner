@@ -47,13 +47,19 @@ make test
 Run the Discord bot locally:
 
 ```bash
-make run
+make run-bot
 ```
 
 Run the worker locally:
 
 ```bash
 make run-worker
+```
+
+Run both processes locally:
+
+```bash
+make run-all
 ```
 
 Check service configuration:

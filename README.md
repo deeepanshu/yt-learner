@@ -11,15 +11,18 @@ Discord-first MVP for turning YouTube URLs and watched YouTube channel uploads i
 5. Invite the bot to your server.
 6. Run the bot with `uv run yt-learner-discord`.
 7. Run the worker with `uv run yt-learner-worker`.
+8. Run the scheduler manually with `uv run yt-learner-scheduler` or install the cron entry shown below.
 
 ## Runtime Model
 
 The app runs as two long-lived processes:
 
 - `yt-learner-discord`: accepts Discord messages and slash commands, validates input, and enqueues jobs
-- `yt-learner-worker`: claims queued jobs from SQLite, polls watched YouTube channels for new uploads, runs the extraction pipeline, and posts the result back to Discord
+- `yt-learner-worker`: claims queued jobs from SQLite, runs the extraction pipeline, and posts the result back to Discord
 
-Both services should be running in normal deployment. If only the bot is running, jobs will queue but never complete. If only the worker is running, watched channels will continue polling, but you will not be able to add or remove watches from Discord.
+Channel discovery is run separately through `yt-learner-scheduler`, which is intended to be triggered by cron.
+
+Both services should be running in normal deployment. If only the bot is running, jobs will queue but never complete. If only the worker is running, existing queued jobs will still process, but you will not be able to add or remove watches from Discord.
 
 Access policy:
 
@@ -43,7 +46,6 @@ Optional values:
 - `OPENAI_MODEL`
 - `DISCORD_ALLOWED_CHANNEL_ID`
 - `YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS`
-- `YOUTUBE_SCHEDULER_POLL_INTERVAL_SECONDS`
 - `OTEL_EXPORTER_OTLP_ENDPOINT`
 - `OTEL_EXPORTER_OTLP_PROTOCOL`
 - `OTEL_RESOURCE_ATTRIBUTES`
@@ -62,6 +64,14 @@ Behavior:
 - later uploads are discovered from the YouTube channel feed and enqueued once
 - discovered video ids are stored in SQLite, so restarts do not re-enqueue the same upload
 - each watched YouTube channel has its own Discord destination, and multiple watched channels may share the same destination
+
+Managed scheduler cron entry:
+
+```cron
+0 */2 * * * cd /home/deepanshu/projects/yt-learner && /home/deepanshu/.local/bin/uv run yt-learner-scheduler
+```
+
+`make service-install` and the other top-level `make service-*` commands manage this cron entry for you. By default it runs discovery every 2 hours on the hour and writes output to `data/yt-learner-scheduler.log`. The scheduler only enqueues jobs; `yt-learner-worker` still needs to be running to process them.
 
 Supported watch inputs:
 
@@ -115,16 +125,17 @@ The application intentionally does not talk to Loki directly. OTLP keeps the app
 - Run both bot and worker locally with `make run-all`.
 - Run the bot locally with `make run-bot`.
 - Run the worker locally with `make run-worker`.
+- Run one scheduler pass locally with `make run-scheduler`.
 
 ## Service Management
 
-The repo includes a wrapper script for both `systemd` units:
+The repo includes a wrapper script for the bot, worker, and scheduler:
 
-- `make service-install` installs and restarts both services
-- `make service-restart` restarts both services
-- `make service-status` shows status for both services
-- `make service-logs` shows recent logs for both services
-- `make service-stop` stops both services
+- `make service-install` installs and restarts both services and installs the scheduler cron entry
+- `make service-restart` restarts both services and refreshes the scheduler cron entry
+- `make service-status` shows status for both services and the scheduler cron entry
+- `make service-logs` shows recent logs for both services and the scheduler log file
+- `make service-stop` stops both services and removes the scheduler cron entry
 
 You can also target one service at a time:
 
@@ -134,12 +145,19 @@ You can also target one service at a time:
 - `make service-restart-worker`
 - `make service-status-worker`
 - `make service-logs-worker`
+- `make service-stop-worker`
+- `make service-install-scheduler`
+- `make service-restart-scheduler`
+- `make service-status-scheduler`
+- `make service-logs-scheduler`
+- `make service-stop-scheduler`
 
 ## Deployment
 
-- The included [yt-learner-discord.service](/home/deepanshu/projects/yt-learner/.worktrees/channel-scheduler/yt-learner-discord.service:1) and [yt-learner-worker.service](/home/deepanshu/projects/yt-learner/.worktrees/channel-scheduler/yt-learner-worker.service:1) units assume the project lives at `/home/pi/yt-learner`.
+- The included `yt-learner-discord.service` and `yt-learner-worker.service` units assume the project lives at `/home/pi/yt-learner`.
 - Update `WorkingDirectory` or the `uv` path in that unit if your Raspberry Pi uses a different layout.
-- The repo includes [scripts/service.sh](/home/deepanshu/projects/yt-learner/.worktrees/channel-scheduler/scripts/service.sh:1) as a thin wrapper around the `systemd` commands for both services.
+- The repo includes `scripts/service.sh` as a thin wrapper around the `systemd` commands for both services.
+- Watched-channel polling is managed by `scripts/service.sh`, which installs a user crontab entry for the scheduler.
 
 ## Current Scope
 

@@ -6,7 +6,6 @@ from app.channel_watches import WatchRepository
 from app.config import Settings
 from app.job_queue import JobQueue
 from app.pipeline import ProcessedVideo
-from app.scheduler import ChannelScheduler
 from app.storage import OutputStore
 from app.worker import WorkerService
 
@@ -75,12 +74,6 @@ def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
         queued_job_id=job.id,
     )
 
-    scheduler = ChannelScheduler(
-        watch_repository=repository,
-        queue=queue,
-        store=store,
-        feed_fetcher=lambda channel_id: (channel_id, []),
-    )
     processor = StubProcessor(
         result=ProcessedVideo(
             learning_record_id=77,
@@ -103,7 +96,7 @@ def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
         queue=queue,
         processor=processor,
         discord_client=FakeDiscordClient(channel),
-        scheduler=scheduler,
+        watch_repository=repository,
     )
 
     completed = run_async(service.run_next_job())

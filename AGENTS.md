@@ -56,6 +56,12 @@ Run the worker locally:
 make run-worker
 ```
 
+Run one scheduler pass locally:
+
+```bash
+make run-scheduler
+```
+
 Run both processes locally:
 
 ```bash
@@ -78,7 +84,7 @@ make service-logs
 make service-stop
 ```
 
-Service-specific targets are also available for both `bot` and `worker`.
+Service-specific targets are also available for `bot`, `worker`, and `scheduler`.
 
 ## Environment
 
@@ -103,8 +109,6 @@ Common optional values:
 
 ## Working Rules for Agents
 
-- Do all implementation work on a feature branch checked out in a Git worktree, not directly in the main checkout.
-- Use `.worktrees/` at the repository root as the default location for agent worktrees unless the task explicitly requires a different location.
 - Keep edits targeted and consistent with the current two-process architecture.
 - Prefer extending existing modules over introducing duplicate abstractions.
 - Treat the bot, queue, worker, and pipeline boundaries as intentional unless the task explicitly changes them.

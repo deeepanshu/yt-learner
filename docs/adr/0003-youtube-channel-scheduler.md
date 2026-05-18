@@ -1,8 +1,8 @@
-# ADR 0003: Add YouTube Channel Scheduling Inside the Existing Worker and Persist Seen Uploads in SQLite
+# ADR 0003: Add YouTube Channel Scheduling and Persist Seen Uploads in SQLite
 
 ## Status
 
-Accepted
+Superseded by ADR 0004 on 2026-05-18
 
 ## Date
 
@@ -12,7 +12,7 @@ Accepted
 
 The initial MVP supported manual `/learn` requests and plain YouTube URLs sent to Discord. The next requirement is to watch selected YouTube channels, learn from new uploads automatically, and post the result into topic-specific Discord channels.
 
-That creates four design questions:
+That created four design questions:
 
 1. Should scheduling run in the Discord bot process or the worker process?
 2. Where should watched-channel configuration live?
@@ -26,7 +26,7 @@ The existing runtime already separates request intake from long-running work:
 
 The project also already uses SQLite for durable queue state and learning-record metadata.
 
-## Decision
+## Historical Decision
 
 The scheduler will be added to the existing worker process and will reuse the current queue-and-worker pipeline rather than introducing a third long-lived process or a direct processing path.
 
@@ -44,6 +44,10 @@ Bootstrap behavior is conservative:
 - only later unseen uploads are enqueued
 
 Discovery uses YouTube’s public channel feed in v1 instead of the YouTube Data API.
+
+## Superseding Decision
+
+ADR 0004 moves watched-channel polling out of the long-lived worker and into a dedicated run-once scheduler command invoked by cron. The queue, dedupe, and worker processing model remain the same.
 
 ## Consequences
 
@@ -86,7 +90,7 @@ Rejected because first-sync backfill could create a large unreviewed queue and s
 Implementation should include:
 
 - admin `/watch add`, `/watch list`, and `/watch remove` commands
-- worker-side channel polling on a configurable interval
+- cron-triggered channel polling through a dedicated scheduler command
 - SQLite persistence for watched channels and discovered uploads
 - restart-safe dedupe before queueing
 

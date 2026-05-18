@@ -13,7 +13,6 @@ from app.discord_bot import build_processor
 from app.extractor import ExtractionError
 from app.job_queue import Job, JobQueue
 from app.pipeline import ProcessedVideo, VideoProcessor
-from app.scheduler import ChannelScheduler
 from app.telemetry import NoopTelemetry, configure_logging, configure_telemetry
 from app.transcript import TranscriptFetchError, TranscriptUnavailableError, UnsupportedVideoError
 
@@ -28,14 +27,14 @@ class WorkerService:
         queue: JobQueue,
         processor: VideoProcessor,
         discord_client: discord.Client,
-        scheduler: ChannelScheduler | None = None,
+        watch_repository: WatchRepository | None = None,
         telemetry=None,
     ) -> None:
         self.settings = settings
         self.queue = queue
         self.processor = processor
         self.discord_client = discord_client
-        self.scheduler = scheduler
+        self.watch_repository = watch_repository
         self.telemetry = telemetry or NoopTelemetry()
 
     async def run_next_job(self) -> Job | None:
@@ -80,8 +79,8 @@ class WorkerService:
             learning_record_id=result.learning_record_id,
             result_path=str(result.output_path),
         )
-        if self.scheduler is not None:
-            self.scheduler.watch_repository.mark_video_indexed_by_job(
+        if self.watch_repository is not None:
+            self.watch_repository.mark_video_indexed_by_job(
                 queued_job_id=job.id,
                 learning_record_id=result.learning_record_id,
             )
@@ -105,16 +104,7 @@ class WorkerService:
 
     async def run_forever(self, *, poll_interval_seconds: float = 2.0) -> None:
         await self.discord_client.wait_until_ready()
-        next_scheduler_poll = 0.0
         while not self.discord_client.is_closed():
-            now = time.monotonic()
-            if self.scheduler is not None and now >= next_scheduler_poll:
-                LOGGER.info(
-                    "worker_scheduler_poll_due poll_interval_seconds=%s",
-                    self.settings.scheduler_poll_interval_seconds,
-                )
-                await self.scheduler.poll_once()
-                next_scheduler_poll = now + float(self.settings.scheduler_poll_interval_seconds)
             job = await self.run_next_job()
             if job is None:
                 await asyncio.sleep(poll_interval_seconds)
@@ -227,11 +217,6 @@ def main() -> int:
     queue = JobQueue(settings.db_path)
     processor = build_processor(settings)
     watch_repository = WatchRepository(settings.db_path)
-    scheduler = ChannelScheduler(
-        watch_repository=watch_repository,
-        queue=queue,
-        store=processor.store,
-    )
 
     if args.run_once:
         client = discord.Client(intents=discord.Intents.none())
@@ -241,7 +226,7 @@ def main() -> int:
             queue=queue,
             processor=processor,
             discord_client=client,
-            scheduler=scheduler,
+            watch_repository=watch_repository,
             telemetry=telemetry,
         )
 
@@ -262,7 +247,7 @@ def main() -> int:
             queue=queue,
             processor=processor,
             discord_client=None,  # type: ignore[arg-type]
-            scheduler=scheduler,
+            watch_repository=watch_repository,
             telemetry=configure_telemetry("yt-learner-worker"),
         )
     )

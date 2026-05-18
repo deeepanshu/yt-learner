@@ -17,7 +17,6 @@ class Settings:
     openai_model: str = "gpt-4o-mini"
     allowed_channel_id: str | None = None
     max_transcript_chars: int | None = None
-    scheduler_poll_interval_seconds: int = 300
 
 
 def _required(name: str) -> str:
@@ -50,5 +49,4 @@ def load_settings() -> Settings:
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini",
         allowed_channel_id=os.getenv("DISCORD_ALLOWED_CHANNEL_ID", "").strip() or None,
         max_transcript_chars=_optional_int("YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS"),
-        scheduler_poll_interval_seconds=_optional_int("YOUTUBE_SCHEDULER_POLL_INTERVAL_SECONDS") or 300,
     )

@@ -1,7 +1,8 @@
-.PHONY: sync test check run-bot run-worker run-all \
+.PHONY: sync test check run-bot run-worker run-scheduler run-all \
 	service-install service-restart service-status service-logs service-stop \
 	service-install-bot service-restart-bot service-status-bot service-logs-bot service-stop-bot \
-	service-install-worker service-restart-worker service-status-worker service-logs-worker service-stop-worker
+	service-install-worker service-restart-worker service-status-worker service-logs-worker service-stop-worker \
+	service-install-scheduler service-restart-scheduler service-status-scheduler service-logs-scheduler service-stop-scheduler
 
 sync:
 	uv sync
@@ -17,6 +18,9 @@ run-bot:
 
 run-worker:
 	uv run yt-learner-worker
+
+run-scheduler:
+	uv run yt-learner-scheduler
 
 run-all:
 	(sh -c 'trap "kill 0" INT TERM EXIT; $(MAKE) run-bot & $(MAKE) run-worker & wait')
@@ -65,3 +69,18 @@ service-logs-worker:
 
 service-stop-worker:
 	./scripts/service.sh stop worker
+
+service-install-scheduler:
+	./scripts/service.sh install scheduler
+
+service-restart-scheduler:
+	./scripts/service.sh restart scheduler
+
+service-status-scheduler:
+	./scripts/service.sh status scheduler
+
+service-logs-scheduler:
+	./scripts/service.sh logs scheduler
+
+service-stop-scheduler:
+	./scripts/service.sh stop scheduler

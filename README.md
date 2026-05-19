@@ -68,10 +68,10 @@ Behavior:
 Managed scheduler cron entry:
 
 ```cron
-0 */2 * * * cd /home/deepanshu/projects/yt-learner && /home/deepanshu/.local/bin/uv run yt-learner-scheduler
+CRON_TZ=Asia/Bangkok 0 8 * * * cd /home/deepanshu/projects/yt-learner && /home/deepanshu/.local/bin/uv run yt-learner-scheduler
 ```
 
-`make service-install` and the other top-level `make service-*` commands manage this cron entry for you. By default it runs discovery every 2 hours on the hour and writes output to `data/yt-learner-scheduler.log`. The scheduler only enqueues jobs; `yt-learner-worker` still needs to be running to process them.
+`make service-install` and the other top-level `make service-*` commands manage this cron entry for you. By default it runs discovery once per day at 8:00 AM Bangkok time and writes output to `data/yt-learner-scheduler.log`. The scheduler only enqueues jobs; `yt-learner-worker` still needs to be running to process them.
 
 Supported watch inputs:
 

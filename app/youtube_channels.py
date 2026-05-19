@@ -47,7 +47,7 @@ def fetch_channel_feed(channel_id: str) -> tuple[str, list[ChannelFeedVideo]]:
         with urlopen(request_url, timeout=10) as response:
             payload = response.read()
     except Exception as exc:
-        LOGGER.exception("youtube_feed_fetch_failed channel_id=%s url=%s", channel_id, request_url)
+        LOGGER.warning("youtube_feed_fetch_failed channel_id=%s url=%s error=%s", channel_id, request_url, exc)
         raise YouTubeChannelError("Unable to fetch YouTube channel feed") from exc
 
     try:
@@ -87,13 +87,7 @@ def resolve_youtube_channel(reference: str) -> ResolvedYouTubeChannel:
         raise YouTubeChannelError("Missing YouTube channel reference")
 
     if _looks_like_channel_id(raw):
-        title, _ = fetch_channel_feed(raw)
-        LOGGER.info("youtube_channel_resolve_succeeded raw_reference=%r channel_id=%s via=direct_channel_id title=%r", reference, raw, title)
-        return ResolvedYouTubeChannel(
-            channel_id=raw,
-            title=title,
-            canonical_url=f"https://www.youtube.com/channel/{raw}",
-        )
+        return _resolve_channel_id(raw, reference=reference, via="direct_channel_id")
 
     url = _normalize_channel_reference(raw)
     parsed = urlparse(url)
@@ -103,13 +97,7 @@ def resolve_youtube_channel(reference: str) -> ResolvedYouTubeChannel:
         if not _looks_like_channel_id(channel_id):
             LOGGER.info("youtube_channel_resolve_failed reason=unsupported_channel_path raw_reference=%r parsed_path=%r", reference, path)
             raise YouTubeChannelError("Unsupported YouTube channel reference")
-        title, _ = fetch_channel_feed(channel_id)
-        LOGGER.info("youtube_channel_resolve_succeeded raw_reference=%r channel_id=%s via=canonical_channel_url title=%r", reference, channel_id, title)
-        return ResolvedYouTubeChannel(
-            channel_id=channel_id,
-            title=title,
-            canonical_url=f"https://www.youtube.com/channel/{channel_id}",
-        )
+        return _resolve_channel_id(channel_id, reference=reference, via="canonical_channel_url")
 
     page_html = _fetch_text(url)
     match = CHANNEL_ID_PATTERN.search(page_html) or EXTERNAL_ID_PATTERN.search(page_html) or OG_URL_PATTERN.search(page_html)
@@ -132,6 +120,29 @@ def _normalize_channel_reference(reference: str) -> str:
     if reference.startswith("http://") or reference.startswith("https://"):
         return reference
     raise YouTubeChannelError("Unsupported YouTube channel reference")
+
+
+def _resolve_channel_id(channel_id: str, *, reference: str, via: str) -> ResolvedYouTubeChannel:
+    canonical_url = f"https://www.youtube.com/channel/{channel_id}"
+    try:
+        title, _ = fetch_channel_feed(channel_id)
+        resolution_via = via
+    except YouTubeChannelError:
+        page_html = _fetch_text(canonical_url)
+        title = _extract_page_title(page_html) or channel_id
+        resolution_via = f"{via}_page_fallback"
+    LOGGER.info(
+        "youtube_channel_resolve_succeeded raw_reference=%r channel_id=%s via=%s title=%r",
+        reference,
+        channel_id,
+        resolution_via,
+        title,
+    )
+    return ResolvedYouTubeChannel(
+        channel_id=channel_id,
+        title=title,
+        canonical_url=canonical_url,
+    )
 
 
 def _fetch_text(url: str) -> str:

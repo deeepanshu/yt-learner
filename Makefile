@@ -1,8 +1,5 @@
 .PHONY: sync test check run-bot run-worker run-scheduler run-all \
-	service-install service-restart service-status service-logs service-stop \
-	service-install-bot service-restart-bot service-status-bot service-logs-bot service-stop-bot \
-	service-install-worker service-restart-worker service-status-worker service-logs-worker service-stop-worker \
-	service-install-scheduler service-restart-scheduler service-status-scheduler service-logs-scheduler service-stop-scheduler
+	docker-build docker-up docker-down docker-restart docker-logs docker-ps docker-run-scheduler
 
 sync:
 	uv sync
@@ -11,7 +8,7 @@ test:
 	uv run pytest
 
 check:
-	./scripts/service.sh check
+	uv run yt-learner-discord --check-config
 
 run-bot:
 	uv run yt-learner-discord
@@ -25,62 +22,23 @@ run-scheduler:
 run-all:
 	(sh -c 'trap "kill 0" INT TERM EXIT; $(MAKE) run-bot & $(MAKE) run-worker & wait')
 
-service-install:
-	./scripts/service.sh install all
+docker-build:
+	docker compose build discord
 
-service-restart:
-	./scripts/service.sh restart all
+docker-up:
+	docker compose up -d --build
 
-service-status:
-	./scripts/service.sh status all
+docker-down:
+	docker compose down
 
-service-logs:
-	./scripts/service.sh logs all
+docker-restart:
+	docker compose up -d --build --force-recreate
 
-service-stop:
-	./scripts/service.sh stop all
+docker-logs:
+	docker compose logs -f
 
-service-install-bot:
-	./scripts/service.sh install discord
+docker-ps:
+	docker compose ps
 
-service-restart-bot:
-	./scripts/service.sh restart discord
-
-service-status-bot:
-	./scripts/service.sh status discord
-
-service-logs-bot:
-	./scripts/service.sh logs discord
-
-service-stop-bot:
-	./scripts/service.sh stop discord
-
-service-install-worker:
-	./scripts/service.sh install worker
-
-service-restart-worker:
-	./scripts/service.sh restart worker
-
-service-status-worker:
-	./scripts/service.sh status worker
-
-service-logs-worker:
-	./scripts/service.sh logs worker
-
-service-stop-worker:
-	./scripts/service.sh stop worker
-
-service-install-scheduler:
-	./scripts/service.sh install scheduler
-
-service-restart-scheduler:
-	./scripts/service.sh restart scheduler
-
-service-status-scheduler:
-	./scripts/service.sh status scheduler
-
-service-logs-scheduler:
-	./scripts/service.sh logs scheduler
-
-service-stop-scheduler:
-	./scripts/service.sh stop scheduler
+docker-run-scheduler:
+	docker compose run --rm scheduler yt-learner-scheduler

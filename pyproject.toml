@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 yt-learner-discord = "app.discord_bot:main"
 yt-learner-scheduler = "app.scheduler_cli:main"
+yt-learner-scheduler-loop = "app.scheduler_loop:main"
 yt-learner-worker = "app.worker:main"
 
 [build-system]

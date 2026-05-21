@@ -7,3 +7,4 @@ __pycache__/
 outputs/*.md
 outputs/*.txt
 data/*.sqlite3
+data/*.log

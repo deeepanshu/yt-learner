@@ -11,18 +11,54 @@ Discord-first MVP for turning YouTube URLs and watched YouTube channel uploads i
 5. Invite the bot to your server.
 6. Run the bot with `uv run yt-learner-discord`.
 7. Run the worker with `uv run yt-learner-worker`.
-8. Run the scheduler manually with `uv run yt-learner-scheduler` or install the cron entry shown below.
+8. Run the scheduler manually with `uv run yt-learner-scheduler` when you want a one-off poll during development.
+
+## Docker Deployment
+
+Docker Compose is the default deployment path.
+
+The deployed runtime keeps the current process split:
+
+- `discord`: accepts Discord messages and slash commands, validates input, and enqueues jobs
+- `worker`: claims queued jobs from SQLite, runs the extraction pipeline, and posts results back to Discord
+- `scheduler`: waits until `8:00 AM` in `Asia/Bangkok`, runs one watched-channel poll, enqueues new jobs, and waits for the next day
+
+Persistent storage is mounted from the host:
+
+- `./data` stores the SQLite database
+- `./outputs` stores generated markdown artifacts
+
+Standard Docker flow:
+
+```bash
+make docker-build
+make docker-up
+make docker-logs
+```
+
+If you want Compose to load a different env file, set `YT_LEARNER_ENV_FILE`, for example `YT_LEARNER_ENV_FILE=.env.prod make docker-up`.
+
+Manual one-off scheduler run inside the containerized deployment:
+
+```bash
+make docker-run-scheduler
+```
+
+Useful operational commands:
+
+- `make docker-down`
+- `make docker-restart`
+- `make docker-ps`
 
 ## Runtime Model
 
-The app runs as two long-lived processes:
+The app still has two long-lived app processes and one scheduled process:
 
 - `yt-learner-discord`: accepts Discord messages and slash commands, validates input, and enqueues jobs
 - `yt-learner-worker`: claims queued jobs from SQLite, runs the extraction pipeline, and posts the result back to Discord
+- `yt-learner-scheduler`: runs channel discovery on a daily wall-clock schedule and enqueues new work
 
-Channel discovery is run separately through `yt-learner-scheduler`, which is intended to be triggered by cron.
-
-Both services should be running in normal deployment. If only the bot is running, jobs will queue but never complete. If only the worker is running, existing queued jobs will still process, but you will not be able to add or remove watches from Discord.
+In normal deployment all three containers should be running. If only the bot is running, jobs will queue but never complete. If only the worker is running, existing queued jobs will still process, but you will not be able to add or remove watches from Discord. If the scheduler is not running, watched channels will stop enqueueing new uploads.
 
 Access policy:
 
@@ -49,6 +85,9 @@ Optional values:
 - `OTEL_EXPORTER_OTLP_ENDPOINT`
 - `OTEL_EXPORTER_OTLP_PROTOCOL`
 - `OTEL_RESOURCE_ATTRIBUTES`
+- `YT_LEARNER_SCHEDULER_TIMEZONE`
+- `YT_LEARNER_SCHEDULER_HOUR`
+- `YT_LEARNER_SCHEDULER_MINUTE`
 
 ## Watched Channels
 
@@ -65,13 +104,7 @@ Behavior:
 - discovered video ids are stored in SQLite, so restarts do not re-enqueue the same upload
 - each watched YouTube channel has its own Discord destination, and multiple watched channels may share the same destination
 
-Managed scheduler cron entry:
-
-```cron
-CRON_TZ=Asia/Bangkok 0 8 * * * cd /home/deepanshu/projects/yt-learner && /home/deepanshu/.local/bin/uv run yt-learner-scheduler
-```
-
-`make service-install` and the other top-level `make service-*` commands manage this cron entry for you. By default it runs discovery once per day at 8:00 AM Bangkok time and writes output to `data/yt-learner-scheduler.log`. The scheduler only enqueues jobs; `yt-learner-worker` still needs to be running to process them.
+The scheduler container runs discovery once per day at `8:00 AM` Bangkok time. It only enqueues jobs; `yt-learner-worker` still needs to be running to process them.
 
 Supported watch inputs:
 
@@ -99,6 +132,7 @@ OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod
 Service names are set automatically:
 
 - `yt-learner-discord`
+- `yt-learner-scheduler`
 - `yt-learner-worker`
 
 Metric names:
@@ -122,42 +156,45 @@ The application intentionally does not talk to Loki directly. OTLP keeps the app
 - Run tests with `uv run pytest`.
 - Add dependencies with `uv add <package>`.
 - Add dev dependencies with `uv add --dev <package>`.
+- Validate config locally with `make check`.
 - Run both bot and worker locally with `make run-all`.
 - Run the bot locally with `make run-bot`.
 - Run the worker locally with `make run-worker`.
 - Run one scheduler pass locally with `make run-scheduler`.
+- Build the Docker image with `make docker-build`.
+- Start the Docker deployment with `make docker-up`.
 
-## Service Management
+## Cleanup Existing Host Services
 
-The repo includes a wrapper script for the bot, worker, and scheduler:
+If you previously deployed this repo with `systemd` and host cron, clean up the old host-managed runtime before switching fully to Docker Compose:
 
-- `make service-install` installs and restarts both services and installs the scheduler cron entry
-- `make service-restart` restarts both services and refreshes the scheduler cron entry
-- `make service-status` shows status for both services and the scheduler cron entry
-- `make service-logs` shows recent logs for both services and the scheduler log file
-- `make service-stop` stops both services and removes the scheduler cron entry
+1. Stop and disable the old systemd units:
 
-You can also target one service at a time:
+```bash
+sudo systemctl stop yt-learner-discord yt-learner-worker
+sudo systemctl disable yt-learner-discord yt-learner-worker
+```
 
-- `make service-restart-bot`
-- `make service-status-bot`
-- `make service-logs-bot`
-- `make service-restart-worker`
-- `make service-status-worker`
-- `make service-logs-worker`
-- `make service-stop-worker`
-- `make service-install-scheduler`
-- `make service-restart-scheduler`
-- `make service-status-scheduler`
-- `make service-logs-scheduler`
-- `make service-stop-scheduler`
+2. Remove the old unit files if you installed them from this repo:
 
-## Deployment
+```bash
+sudo rm -f /etc/systemd/system/yt-learner-discord.service
+sudo rm -f /etc/systemd/system/yt-learner-worker.service
+sudo systemctl daemon-reload
+```
 
-- The included `yt-learner-discord.service` and `yt-learner-worker.service` units assume the project lives at `/home/pi/yt-learner`.
-- Update `WorkingDirectory` or the `uv` path in that unit if your Raspberry Pi uses a different layout.
-- The repo includes `scripts/service.sh` as a thin wrapper around the `systemd` commands for both services.
-- Watched-channel polling is managed by `scripts/service.sh`, which installs a user crontab entry for the scheduler.
+3. Remove the old scheduler cron entry:
+
+```bash
+(crontab -l 2>/dev/null || true) | grep -F -v "yt-learner-scheduler" | crontab -
+```
+
+4. Start the Docker deployment:
+
+```bash
+make docker-build
+make docker-up
+```
 
 ## Current Scope
 

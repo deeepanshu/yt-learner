@@ -1,0 +1,32 @@
+x-app-service: &app-service
+  image: yt-learner:local
+  env_file:
+    - ${YT_LEARNER_ENV_FILE:-.env}
+  environment:
+    DISCORD_OUTPUT_DIR: /app/outputs
+    YOUTUBE_LEARNER_DB_PATH: /app/data/yt_learner.sqlite3
+  volumes:
+    - ./data:/app/data
+    - ./outputs:/app/outputs
+  restart: unless-stopped
+
+services:
+  discord:
+    <<: *app-service
+    build:
+      context: .
+    command: yt-learner-discord
+
+  worker:
+    <<: *app-service
+    command: yt-learner-worker
+
+  scheduler:
+    <<: *app-service
+    command: yt-learner-scheduler-loop
+    environment:
+      DISCORD_OUTPUT_DIR: /app/outputs
+      YOUTUBE_LEARNER_DB_PATH: /app/data/yt_learner.sqlite3
+      YT_LEARNER_SCHEDULER_TIMEZONE: Asia/Bangkok
+      YT_LEARNER_SCHEDULER_HOUR: "8"
+      YT_LEARNER_SCHEDULER_MINUTE: "0"

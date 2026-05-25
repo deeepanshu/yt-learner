@@ -9,6 +9,9 @@ x-app-service: &app-service
     - ./data:/app/data
     - ./outputs:/app/outputs
   restart: unless-stopped
+  networks:
+    - default
+    - observability
 
 services:
   discord:
@@ -30,3 +33,7 @@ services:
       YT_LEARNER_SCHEDULER_TIMEZONE: Asia/Bangkok
       YT_LEARNER_SCHEDULER_HOUR: "8"
       YT_LEARNER_SCHEDULER_MINUTE: "0"
+
+networks:
+  observability:
+    external: true

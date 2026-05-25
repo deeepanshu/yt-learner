@@ -123,11 +123,13 @@ Supported watch inputs:
 Recommended entries in `/home/deepanshu/.env`:
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4318/v1/logs
 OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod
 ```
+
+When running inside Docker, connect the app services to the shared external `observability` Docker network and address the collector by container DNS name such as `otel-collector:4318`. Do not use `localhost:4318` from inside the app containers unless the collector is running in the same container.
 
 Service names are set automatically:
 

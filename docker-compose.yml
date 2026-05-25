@@ -1,6 +1,8 @@
 x-app-service: &app-service
   image: yt-learner:local
   env_file:
+    - /home/deepanshu/config/shared.env
+    - /home/deepanshu/config/shared.secrets.env
     - ${YT_LEARNER_ENV_FILE:-.env}
   environment:
     DISCORD_OUTPUT_DIR: /app/outputs

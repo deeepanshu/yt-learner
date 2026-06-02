@@ -4,7 +4,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+
+SHARED_ENV_PATHS = (
+    Path("/home/deepanshu/config/shared.env"),
+    Path("/home/deepanshu/config/shared.secrets.env"),
+)
 
 
 @dataclass(frozen=True)
@@ -36,8 +40,34 @@ def _optional_int(name: str) -> int | None:
         raise RuntimeError(f"Environment variable {name} must be an integer") from exc
 
 
+def _read_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        values[key] = value.strip().strip('"').strip("'")
+    return values
+
+
+def load_environment_files() -> None:
+    values: dict[str, str] = {}
+    for env_path in (*SHARED_ENV_PATHS, Path(".env")):
+        values.update(_read_env_file(env_path))
+    for key, value in values.items():
+        os.environ.setdefault(key, value)
+
+
 def load_settings() -> Settings:
-    load_dotenv()
+    load_environment_files()
     output_dir = Path(os.getenv("DISCORD_OUTPUT_DIR", "./outputs")).expanduser().resolve()
     db_path = Path(os.getenv("YOUTUBE_LEARNER_DB_PATH", "./data/yt_learner.sqlite3")).expanduser().resolve()
     return Settings(

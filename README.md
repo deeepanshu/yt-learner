@@ -72,13 +72,7 @@ Access policy:
 
 ## Environment
 
-Required values are loaded from layered env files, in this order:
-
-1. `/home/deepanshu/config/shared.env`
-2. `/home/deepanshu/config/shared.secrets.env`
-3. repo-local `.env`
-
-Put shared secrets such as `OPENAI_API_KEY` and `DISCORD_BOT_TOKEN` in `/home/deepanshu/config/shared.secrets.env`. Use repo-local `.env` for project-specific overrides only.
+Required values are loaded from the repo-local `.env` file. Put project secrets such as `OPENAI_API_KEY` and `DISCORD_BOT_TOKEN` in `.env`.
 
 Optional values:
 

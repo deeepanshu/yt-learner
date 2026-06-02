@@ -5,12 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-SHARED_ENV_PATHS = (
-    Path("/home/deepanshu/config/shared.env"),
-    Path("/home/deepanshu/config/shared.secrets.env"),
-)
-
-
 @dataclass(frozen=True)
 class Settings:
     openai_api_key: str
@@ -58,16 +52,13 @@ def _read_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def load_environment_files() -> None:
-    values: dict[str, str] = {}
-    for env_path in (*SHARED_ENV_PATHS, Path(".env")):
-        values.update(_read_env_file(env_path))
-    for key, value in values.items():
+def load_environment_file() -> None:
+    for key, value in _read_env_file(Path(".env")).items():
         os.environ.setdefault(key, value)
 
 
 def load_settings() -> Settings:
-    load_environment_files()
+    load_environment_file()
     output_dir = Path(os.getenv("DISCORD_OUTPUT_DIR", "./outputs")).expanduser().resolve()
     db_path = Path(os.getenv("YOUTUBE_LEARNER_DB_PATH", "./data/yt_learner.sqlite3")).expanduser().resolve()
     return Settings(

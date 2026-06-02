@@ -1,26 +1,6 @@
 import os
 
-from app.config import _read_env_file, load_environment_file
-
-
-def test_read_env_file_parses_simple_values(tmp_path) -> None:
-    env_file = tmp_path / "sample.env"
-    env_file.write_text(
-        "# comment\n"
-        "OPENAI_MODEL=gpt-4o-mini\n"
-        "QUOTED=\"quoted value\"\n"
-        "EMPTY=\n"
-        "invalid-line\n",
-        encoding="utf-8",
-    )
-
-    values = _read_env_file(env_file)
-
-    assert values == {
-        "OPENAI_MODEL": "gpt-4o-mini",
-        "QUOTED": "quoted value",
-        "EMPTY": "",
-    }
+from app.config import load_environment_file
 
 
 def test_load_environment_file_reads_repo_local_env_only(tmp_path, monkeypatch) -> None:

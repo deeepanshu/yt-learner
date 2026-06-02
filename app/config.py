@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,27 +35,9 @@ def _optional_int(name: str) -> int | None:
         raise RuntimeError(f"Environment variable {name} must be an integer") from exc
 
 
-def _read_env_file(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return values
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        key, value = stripped.split("=", 1)
-        key = key.strip()
-        if not key:
-            continue
-        values[key] = value.strip().strip('"').strip("'")
-    return values
-
-
 def load_environment_file() -> None:
-    for key, value in _read_env_file(Path(".env")).items():
-        os.environ.setdefault(key, value)
+    dotenv = importlib.import_module("dotenv")
+    dotenv.load_dotenv(dotenv_path=Path(".env"), override=False)
 
 
 def load_settings() -> Settings:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.channel_watches import VideoThreadRepository, WatchRepository
+from app.channel_watches import LearningThreadRepository, WatchRepository
 from app.config import Settings
 from app.job_queue import JobQueue
 from app.pipeline import AnsweredVideoQuestion, ProcessedVideo
@@ -325,7 +325,7 @@ def test_worker_sends_long_video_question_answer_as_attachment(tmp_path) -> None
     assert thread.messages[0][2] == "partial:3333"
 
 
-def test_worker_creates_video_thread_for_guild_job(tmp_path) -> None:
+def test_worker_creates_learning_thread_for_guild_job(tmp_path) -> None:
     db_path = tmp_path / "data" / "yt_learner.sqlite3"
     output_root = tmp_path / "outputs"
     result_path = output_root / "result.md"
@@ -342,7 +342,7 @@ def test_worker_creates_video_thread_for_guild_job(tmp_path) -> None:
         guild_id="guild-1",
     )
     parent = FakeThreadParent(channel_id=1001)
-    thread_repository = VideoThreadRepository(db_path)
+    thread_repository = LearningThreadRepository(db_path)
     service = WorkerService(
         settings=Settings(
             openai_api_key="key",
@@ -363,7 +363,7 @@ def test_worker_creates_video_thread_for_guild_job(tmp_path) -> None:
             )
         ),
         discord_client=FakeDiscordClient(parent),
-        video_thread_repository=thread_repository,
+        learning_thread_repository=thread_repository,
     )
 
     run_async(service.run_next_job())
@@ -383,7 +383,7 @@ def test_worker_creates_video_thread_for_guild_job(tmp_path) -> None:
     assert saved.thread_id == thread.id
 
 
-def test_worker_reuses_existing_video_thread(tmp_path) -> None:
+def test_worker_reuses_existing_learning_thread(tmp_path) -> None:
     db_path = tmp_path / "data" / "yt_learner.sqlite3"
     output_root = tmp_path / "outputs"
     result_path = output_root / "result.md"
@@ -402,7 +402,7 @@ def test_worker_reuses_existing_video_thread(tmp_path) -> None:
     existing_thread = FakeThread(channel_id=3003, name="Existing Demo Video")
     client = FakeDiscordClient(parent)
     client.channels[existing_thread.id] = existing_thread
-    thread_repository = VideoThreadRepository(db_path)
+    thread_repository = LearningThreadRepository(db_path)
     thread_repository.save_thread(
         guild_id="guild-1",
         parent_channel_id=1001,
@@ -430,7 +430,7 @@ def test_worker_reuses_existing_video_thread(tmp_path) -> None:
             )
         ),
         discord_client=client,
-        video_thread_repository=thread_repository,
+        learning_thread_repository=thread_repository,
     )
 
     run_async(service.run_next_job())

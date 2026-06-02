@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from app import LearningThread, WatchedChannel, WatchedVideo
 
 
 def utc_now() -> datetime:
@@ -22,46 +23,7 @@ def _parse_timestamp(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
-@dataclass(frozen=True)
-class WatchedChannel:
-    id: int
-    guild_id: str
-    youtube_channel_id: str
-    youtube_channel_ref: str
-    youtube_channel_title: str
-    discord_channel_id: int
-    is_active: bool
-    bootstrap_completed_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
-
-
-@dataclass(frozen=True)
-class WatchedVideo:
-    id: int
-    watched_channel_id: int
-    video_id: str
-    video_url: str
-    title: str
-    published_at: datetime | None
-    discovered_at: datetime
-    queued_job_id: int | None
-    learning_record_id: int | None
-
-
-@dataclass(frozen=True)
-class VideoThread:
-    id: int
-    guild_id: str
-    parent_channel_id: int
-    video_id: str
-    thread_id: int
-    title: str
-    created_at: datetime
-    updated_at: datetime
-
-
-class VideoThreadRepository:
+class LearningThreadRepository:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,31 +35,31 @@ class VideoThreadRepository:
         guild_id: str,
         parent_channel_id: int,
         video_id: str,
-    ) -> VideoThread | None:
+    ) -> LearningThread | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT * FROM video_threads
-                WHERE guild_id = ? AND parent_channel_id = ? AND video_id = ?
+                SELECT * FROM learning_threads
+                WHERE guild_id = ? AND parent_channel_id = ? AND source_type = 'youtube_url' AND source_key = ?
                 """,
                 (guild_id, parent_channel_id, video_id),
             ).fetchone()
         if row is None:
             return None
-        return self._row_to_video_thread(row)
+        return self._row_to_learning_thread(row)
 
-    def find_thread_by_thread_id(self, thread_id: int) -> VideoThread | None:
+    def find_thread_by_thread_id(self, thread_id: int) -> LearningThread | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT * FROM video_threads
+                SELECT * FROM learning_threads
                 WHERE thread_id = ?
                 """,
                 (thread_id,),
             ).fetchone()
         if row is None:
             return None
-        return self._row_to_video_thread(row)
+        return self._row_to_learning_thread(row)
 
     def save_thread(
         self,
@@ -107,23 +69,24 @@ class VideoThreadRepository:
         video_id: str,
         thread_id: int,
         title: str,
-    ) -> VideoThread:
+    ) -> LearningThread:
         timestamp = utc_now()
         serialized_timestamp = _serialize_timestamp(timestamp) or timestamp.isoformat()
         with self._connect() as conn:
             row = conn.execute(
                 """
-                INSERT INTO video_threads (
+                INSERT INTO learning_threads (
                     guild_id,
                     parent_channel_id,
-                    video_id,
+                    source_type,
+                    source_key,
                     thread_id,
                     title,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(guild_id, parent_channel_id, video_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, parent_channel_id, source_type, source_key)
                 DO UPDATE SET
                     thread_id = excluded.thread_id,
                     title = excluded.title,
@@ -133,6 +96,7 @@ class VideoThreadRepository:
                 (
                     guild_id,
                     parent_channel_id,
+                    "youtube_url",
                     video_id,
                     thread_id,
                     title,
@@ -141,8 +105,8 @@ class VideoThreadRepository:
                 ),
             ).fetchone()
         if row is None:
-            raise RuntimeError("Unable to save video thread")
-        return self._row_to_video_thread(row)
+            raise RuntimeError("Unable to save learning thread")
+        return self._row_to_learning_thread(row)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -153,32 +117,34 @@ class VideoThreadRepository:
         with self._connect() as conn:
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS video_threads (
+                CREATE TABLE IF NOT EXISTS learning_threads (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id TEXT NOT NULL,
                     parent_channel_id INTEGER NOT NULL,
-                    video_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_key TEXT NOT NULL,
                     thread_id INTEGER NOT NULL,
                     title TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    UNIQUE(guild_id, parent_channel_id, video_id)
+                    UNIQUE(guild_id, parent_channel_id, source_type, source_key)
                 )
                 """
             )
             conn.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_video_threads_thread_id
-                ON video_threads(thread_id)
+                CREATE INDEX IF NOT EXISTS idx_learning_threads_thread_id
+                ON learning_threads(thread_id)
                 """
             )
 
-    def _row_to_video_thread(self, row: sqlite3.Row) -> VideoThread:
-        return VideoThread(
+    def _row_to_learning_thread(self, row: sqlite3.Row) -> LearningThread:
+        return LearningThread(
             id=int(row["id"]),
             guild_id=str(row["guild_id"]),
             parent_channel_id=int(row["parent_channel_id"]),
-            video_id=str(row["video_id"]),
+            source_type=str(row["source_type"]),
+            source_key=str(row["source_key"]),
             thread_id=int(row["thread_id"]),
             title=str(row["title"]),
             created_at=_parse_timestamp(row["created_at"]) or utc_now(),

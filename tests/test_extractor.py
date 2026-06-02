@@ -3,7 +3,7 @@ from typing import cast
 
 from app.extractor import (
     CHAT_SYSTEM_PROMPT,
-    CUSTOM_PROMPT_SYSTEM_PROMPT,
+    CUSTOM_REQUEST_INSTRUCTIONS,
     ExtractionInput,
     SYSTEM_PROMPT,
     build_messages,
@@ -58,7 +58,7 @@ def test_build_messages_uses_custom_prompt_instead_of_default_structure() -> Non
         max_transcript_chars=None,
     )
 
-    assert messages[0] == {"role": "system", "content": CUSTOM_PROMPT_SYSTEM_PROMPT}
+    assert messages[0] == {"role": "system", "content": CUSTOM_REQUEST_INSTRUCTIONS}
     assert "Use this structure exactly" not in message_content(messages[0])
     content = message_content(messages[1])
     assert "User request:\nfocus on deployment advice" in content

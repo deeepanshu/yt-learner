@@ -3,7 +3,7 @@ from typing import cast
 
 import discord
 
-from app.channel_watches import VideoThreadRepository, WatchRepository
+from app.channel_watches import LearningThreadRepository, WatchRepository
 from app.config import Settings
 from app.discord_bot import LearnerBot, extract_youtube_url, normalize_extra_prompt
 from app.job_queue import JobQueue
@@ -23,15 +23,15 @@ def make_bot(
     *,
     queue: "DummyQueue | None" = None,
     watch_repository: "DummyWatchRepository | None" = None,
-    video_thread_repository: "DummyVideoThreadRepository | None" = None,
+    learning_thread_repository: "DummyLearningThreadRepository | None" = None,
 ) -> LearnerBot:
     return LearnerBot(
         settings=dummy_settings(),
         queue=cast(JobQueue, queue or DummyQueue()),
         watch_repository=cast(WatchRepository, watch_repository or DummyWatchRepository()),
-        video_thread_repository=cast(
-            VideoThreadRepository,
-            video_thread_repository or DummyVideoThreadRepository(),
+        learning_thread_repository=cast(
+            LearningThreadRepository,
+            learning_thread_repository or DummyLearningThreadRepository(),
         ),
     )
 
@@ -54,12 +54,12 @@ class DummyQueue:
         return type("Job", (), {"id": 9})()
 
 
-class DummyVideoThreadRecord:
+class DummyLearningThreadRecord:
     video_id = "abc123xyz"
     guild_id = "guild-1"
 
 
-class DummyVideoThreadRepository:
+class DummyLearningThreadRepository:
     def __init__(self) -> None:
         self.thread_record: object | None = None
 
@@ -159,9 +159,9 @@ def test_normalize_extra_prompt_handles_empty_values() -> None:
 
 def test_thread_question_is_enqueued() -> None:
     queue = DummyQueue()
-    video_threads = DummyVideoThreadRepository()
-    video_threads.thread_record = DummyVideoThreadRecord()
-    bot = make_bot(queue=queue, video_thread_repository=video_threads)
+    learning_threads = DummyLearningThreadRepository()
+    learning_threads.thread_record = DummyLearningThreadRecord()
+    bot = make_bot(queue=queue, learning_thread_repository=learning_threads)
     channel = FakeQuestionChannel()
     message = type(
         "Message",

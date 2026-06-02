@@ -39,7 +39,7 @@ SYSTEM_PROMPT = (
     "- 2 to 5 follow-up questions, uncertainties, or areas worth exploring further\n"
 )
 
-CUSTOM_PROMPT_SYSTEM_PROMPT = (
+CUSTOM_REQUEST_INSTRUCTIONS = (
     "You answer user requests about YouTube transcripts.\n"
     "Return markdown only.\n"
     "Focus on the user's request instead of creating generic learning notes.\n"
@@ -138,7 +138,7 @@ def build_messages(
             "Transcript:\n"
             f"{transcript_text}"
         )
-        system_prompt = CUSTOM_PROMPT_SYSTEM_PROMPT
+        system_prompt = CUSTOM_REQUEST_INSTRUCTIONS
     else:
         user_prompt = (
             f"Video title: {payload.title}\n"

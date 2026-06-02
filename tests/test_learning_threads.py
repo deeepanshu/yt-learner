@@ -1,8 +1,8 @@
-from app.channel_watches import VideoThreadRepository
+from app.channel_watches import LearningThreadRepository
 
 
-def test_save_and_find_video_thread(tmp_path) -> None:
-    repository = VideoThreadRepository(tmp_path / "data" / "yt_learner.sqlite3")
+def test_save_and_find_learning_thread(tmp_path) -> None:
+    repository = LearningThreadRepository(tmp_path / "data" / "yt_learner.sqlite3")
 
     saved = repository.save_thread(
         guild_id="guild-1",
@@ -25,7 +25,7 @@ def test_save_and_find_video_thread(tmp_path) -> None:
 
 
 def test_save_thread_updates_existing_mapping(tmp_path) -> None:
-    repository = VideoThreadRepository(tmp_path / "data" / "yt_learner.sqlite3")
+    repository = LearningThreadRepository(tmp_path / "data" / "yt_learner.sqlite3")
 
     first = repository.save_thread(
         guild_id="guild-1",

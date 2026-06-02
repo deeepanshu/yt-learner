@@ -1,18 +1,40 @@
-from dataclasses import dataclass
+from pathlib import Path
+from typing import cast
 
-from app.discord_bot import LearnerBot, extract_youtube_url
+import discord
+
+from app.channel_watches import WatchRepository
+from app.config import Settings
+from app.discord_bot import LearnerBot, extract_youtube_url, normalize_extra_prompt
+from app.job_queue import JobQueue
 
 
-@dataclass
-class DummySettings:
-    discord_allowed_user_id: str | None = None
-    allowed_channel_id: str | None = None
+def dummy_settings() -> Settings:
+    return Settings(
+        openai_api_key="key",
+        discord_bot_token="token",
+        discord_allowed_user_id=None,
+        discord_output_dir=Path("outputs"),
+        db_path=Path("data/yt_learner.sqlite3"),
+    )
+
+
+def make_bot(
+    *,
+    queue: "DummyQueue | None" = None,
+    watch_repository: "DummyWatchRepository | None" = None,
+) -> LearnerBot:
+    return LearnerBot(
+        settings=dummy_settings(),
+        queue=cast(JobQueue, queue or DummyQueue()),
+        watch_repository=cast(WatchRepository, watch_repository or DummyWatchRepository()),
+    )
 
 
 class DummyQueue:
     def __init__(self) -> None:
-        self.calls = []
-        self.reply_updates = []
+        self.calls: list[dict[str, object]] = []
+        self.reply_updates: list[tuple[int, int]] = []
 
     def enqueue_summarize_video(self, **kwargs):
         self.calls.append(kwargs)
@@ -25,10 +47,10 @@ class DummyQueue:
 
 class DummyWatchRepository:
     def __init__(self) -> None:
-        self.by_id_calls = []
-        self.by_channel_calls = []
-        self.by_id_result = None
-        self.by_channel_result = None
+        self.by_id_calls: list[dict[str, object]] = []
+        self.by_channel_calls: list[dict[str, object]] = []
+        self.by_id_result: object | None = None
+        self.by_channel_result: object | None = None
 
     def deactivate_subscription_by_id(self, **kwargs):
         self.by_id_calls.append(kwargs)
@@ -55,7 +77,7 @@ def test_extract_youtube_url_returns_none_when_missing() -> None:
 
 def test_enqueue_job_uses_queue_and_formats_reply() -> None:
     queue = DummyQueue()
-    bot = LearnerBot(settings=DummySettings(), queue=queue, watch_repository=DummyWatchRepository())
+    bot = make_bot(queue=queue)
 
     job = bot._enqueue_job(
         video_url="https://www.youtube.com/watch?v=abc123xyz",
@@ -72,6 +94,7 @@ def test_enqueue_job_uses_queue_and_formats_reply() -> None:
             "source": "discord_message",
             "reply_channel_id": 999,
             "reply_message_id": None,
+            "extra_prompt": None,
         }
     ]
     assert bot._queued_text(7, "https://www.youtube.com/watch?v=abc123xyz") == (
@@ -79,8 +102,28 @@ def test_enqueue_job_uses_queue_and_formats_reply() -> None:
     )
 
 
+def test_enqueue_job_forwards_normalized_extra_prompt() -> None:
+    queue = DummyQueue()
+    bot = make_bot(queue=queue)
+
+    bot._enqueue_job(
+        video_url="https://www.youtube.com/watch?v=abc123xyz",
+        requested_by="42",
+        source="discord_slash_command",
+        reply_channel_id=999,
+        extra_prompt="  focus   on deployment advice  ",
+    )
+
+    assert queue.calls[0]["extra_prompt"] == "focus on deployment advice"
+
+
+def test_normalize_extra_prompt_handles_empty_values() -> None:
+    assert normalize_extra_prompt(None) is None
+    assert normalize_extra_prompt("   ") is None
+
+
 def test_server_scoped_auth_helpers() -> None:
-    bot = LearnerBot(settings=DummySettings(), queue=DummyQueue(), watch_repository=DummyWatchRepository())
+    bot = make_bot()
 
     guild_message = type("Message", (), {"guild": object()})()
     dm_message = type("Message", (), {"guild": None})()
@@ -97,18 +140,18 @@ def test_server_scoped_auth_helpers() -> None:
         {"user": type("User", (), {"guild_permissions": type("Perms", (), {"manage_guild": False})()})()},
     )()
 
-    assert bot._is_allowed_message(guild_message) is True
-    assert bot._is_allowed_message(dm_message) is False
-    assert bot._is_allowed_interaction(guild_interaction) is True
-    assert bot._is_allowed_interaction(dm_interaction) is False
-    assert bot._is_admin_interaction(admin_interaction) is True
-    assert bot._is_admin_interaction(non_admin_interaction) is False
+    assert bot._is_allowed_message(cast(discord.Message, guild_message)) is True
+    assert bot._is_allowed_message(cast(discord.Message, dm_message)) is False
+    assert bot._is_allowed_interaction(cast(discord.Interaction, guild_interaction)) is True
+    assert bot._is_allowed_interaction(cast(discord.Interaction, dm_interaction)) is False
+    assert bot._is_admin_interaction(cast(discord.Interaction, admin_interaction)) is True
+    assert bot._is_admin_interaction(cast(discord.Interaction, non_admin_interaction)) is False
 
 
 def test_remove_subscription_by_watch_id() -> None:
     watch_repository = DummyWatchRepository()
     watch_repository.by_id_result = type("Watch", (), {"youtube_channel_title": "AI Channel"})()
-    bot = LearnerBot(settings=DummySettings(), queue=DummyQueue(), watch_repository=watch_repository)
+    bot = make_bot(watch_repository=watch_repository)
 
     removed = bot._remove_subscription(guild_id="123", raw_reference="42")
 
@@ -120,7 +163,7 @@ def test_remove_subscription_by_watch_id() -> None:
 def test_remove_subscription_by_channel_reference(monkeypatch) -> None:
     watch_repository = DummyWatchRepository()
     watch_repository.by_channel_result = type("Watch", (), {"youtube_channel_title": "AI Channel"})()
-    bot = LearnerBot(settings=DummySettings(), queue=DummyQueue(), watch_repository=watch_repository)
+    bot = make_bot(watch_repository=watch_repository)
 
     monkeypatch.setattr(
         "app.discord_bot.resolve_youtube_channel",
@@ -136,7 +179,7 @@ def test_remove_subscription_by_channel_reference(monkeypatch) -> None:
 
 
 def test_format_subscription_list() -> None:
-    bot = LearnerBot(settings=DummySettings(), queue=DummyQueue(), watch_repository=DummyWatchRepository())
+    bot = make_bot()
     subscriptions = [
         type("Watch", (), {"id": 1, "youtube_channel_title": "AI", "discord_channel_id": 11})(),
         type("Watch", (), {"id": 2, "youtube_channel_title": "Robotics", "discord_channel_id": 22})(),

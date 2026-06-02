@@ -63,6 +63,7 @@ In normal deployment all three containers should be running. If only the bot is 
 Access policy:
 
 - anyone in a server where the bot is installed can use `/learn` or plain YouTube URL messages
+- `/learn` accepts an optional `extra_prompt` field for focusing the generated notes on a specific question or topic; prompted requests are saved as separate artifacts from the generic video notes
 - direct messages to the bot are ignored
 - if `DISCORD_ALLOWED_CHANNEL_ID` is set, manual learning requests are limited to that one channel
 - watched channel management is server-only and requires Discord `Manage Server` permission

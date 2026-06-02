@@ -67,6 +67,14 @@ class Job:
             return None
         return int(raw)
 
+    @property
+    def extra_prompt(self) -> str | None:
+        raw = self.input_data.get("extra_prompt")
+        if not isinstance(raw, str):
+            return None
+        cleaned = raw.strip()
+        return cleaned or None
+
 
 class JobQueue:
     def __init__(self, db_path: Path) -> None:
@@ -82,6 +90,7 @@ class JobQueue:
         source: str,
         reply_channel_id: int | None,
         reply_message_id: int | None = None,
+        extra_prompt: str | None = None,
         priority: int = 0,
     ) -> Job:
         created_at = utc_now()
@@ -90,6 +99,8 @@ class JobQueue:
             "reply_channel_id": reply_channel_id,
             "reply_message_id": reply_message_id,
         }
+        if extra_prompt is not None:
+            input_data["extra_prompt"] = extra_prompt
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -115,6 +126,8 @@ class JobQueue:
                     _serialize_timestamp(created_at),
                 ),
             )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Unable to enqueue job without row id")
             job_id = int(cursor.lastrowid)
         return self.get_job(job_id)
 

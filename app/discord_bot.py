@@ -10,7 +10,7 @@ from discord import app_commands
 from app.channel_watches import WatchRepository
 from app.config import Settings, load_settings
 from app.extractor import LearningExtractor
-from app.job_queue import JobQueue
+from app.job_queue import Job, JobQueue
 from app.pipeline import VideoProcessor
 from app.storage import OutputStore
 from app.telemetry import NoopTelemetry, configure_logging, configure_telemetry
@@ -18,6 +18,7 @@ from app.youtube_channels import YouTubeChannelError, resolve_youtube_channel
 from app.youtube_urls import InvalidYouTubeUrl, parse_youtube_url
 
 YOUTUBE_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)/\S+")
+MAX_EXTRA_PROMPT_CHARS = 1500
 LOGGER = logging.getLogger(__name__)
 
 
@@ -41,8 +42,11 @@ class LearnerBot(discord.Client):
 
     async def setup_hook(self) -> None:
         @self.tree.command(name="learn", description="Process a YouTube video into learning notes")
-        @app_commands.describe(url="A YouTube video URL")
-        async def learn(interaction: discord.Interaction, url: str) -> None:
+        @app_commands.describe(
+            url="A YouTube video URL",
+            extra_prompt="Optional focus, question, or information to look for in the video",
+        )
+        async def learn(interaction: discord.Interaction, url: str, extra_prompt: str | None = None) -> None:
             LOGGER.info(
                 "discord_command_received command=learn guild_id=%s channel_id=%s user_id=%s raw_url=%r",
                 interaction.guild_id,
@@ -75,6 +79,15 @@ class LearnerBot(discord.Client):
                 return
 
             try:
+                normalized_extra_prompt = normalize_extra_prompt(extra_prompt)
+            except ValueError:
+                await interaction.response.send_message(
+                    f"The extra prompt must be {MAX_EXTRA_PROMPT_CHARS} characters or fewer.",
+                    ephemeral=True,
+                )
+                return
+
+            try:
                 parsed = parse_youtube_url(url)
             except InvalidYouTubeUrl:
                 LOGGER.info(
@@ -102,6 +115,7 @@ class LearnerBot(discord.Client):
                 requested_by=str(interaction.user.id),
                 source="discord_slash_command",
                 reply_channel_id=getattr(interaction.channel, "id", None),
+                extra_prompt=normalized_extra_prompt,
             )
             await interaction.response.send_message(self._queued_text(job.id, parsed.canonical_url))
             response_message = await interaction.original_response()
@@ -358,7 +372,7 @@ class LearnerBot(discord.Client):
         permissions = getattr(interaction.user, "guild_permissions", None)
         return bool(getattr(permissions, "manage_guild", False))
 
-    def _is_allowed_location(self, channel: discord.abc.Messageable) -> bool:
+    def _is_allowed_location(self, channel: object) -> bool:
         channel_id = getattr(channel, "id", None)
         if self.settings.allowed_channel_id:
             return str(channel_id) == self.settings.allowed_channel_id
@@ -388,13 +402,16 @@ class LearnerBot(discord.Client):
         source: str,
         reply_channel_id: int | None,
         reply_message_id: int | None = None,
-    ) -> object:
+        extra_prompt: str | None = None,
+    ) -> Job:
+        normalized_extra_prompt = normalize_extra_prompt(extra_prompt)
         job = self.queue.enqueue_summarize_video(
             video_url=video_url,
             requested_by=requested_by,
             source=source,
             reply_channel_id=reply_channel_id,
             reply_message_id=reply_message_id,
+            extra_prompt=normalized_extra_prompt,
         )
         LOGGER.info(
             "job_enqueued job_id=%s source=%s requested_by=%s reply_channel_id=%s video_url=%s",
@@ -445,6 +462,17 @@ def _preview_text(value: str, *, limit: int = 200) -> str:
     if len(cleaned) <= limit:
         return cleaned
     return f"{cleaned[:limit]}..."
+
+
+def normalize_extra_prompt(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = " ".join(value.split())
+    if not cleaned:
+        return None
+    if len(cleaned) > MAX_EXTRA_PROMPT_CHARS:
+        raise ValueError("extra prompt is too long")
+    return cleaned
 
 
 def parse_args() -> argparse.Namespace:

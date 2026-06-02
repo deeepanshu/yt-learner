@@ -21,6 +21,7 @@ def test_enqueue_and_claim_job(tmp_path) -> None:
     assert claimed.video_url == "https://www.youtube.com/watch?v=abc123xyz"
     assert claimed.reply_channel_id == 12345
     assert claimed.reply_message_id == 67890
+    assert claimed.extra_prompt is None
 
 
 def test_mark_done_and_failed(tmp_path) -> None:
@@ -49,6 +50,21 @@ def test_mark_done_and_failed(tmp_path) -> None:
     assert done.result_path == "/tmp/result.md"
     assert failed.status == STATUS_FAILED
     assert failed.error == "boom"
+
+
+def test_enqueue_job_stores_extra_prompt(tmp_path) -> None:
+    queue = JobQueue(tmp_path / "jobs.sqlite3")
+
+    queued = queue.enqueue_summarize_video(
+        video_url="https://www.youtube.com/watch?v=abc123xyz",
+        requested_by="user-1",
+        source="discord_slash_command",
+        reply_channel_id=12345,
+        extra_prompt="focus on deployment advice",
+    )
+
+    assert queued.extra_prompt == "focus on deployment advice"
+    assert queue.get_job(queued.id).extra_prompt == "focus on deployment advice"
 
 
 def test_update_reply_message_id(tmp_path) -> None:

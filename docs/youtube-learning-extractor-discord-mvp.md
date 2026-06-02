@@ -10,9 +10,9 @@
 Build the first version of the YouTube Learning Extractor as a Discord bot instead of Telegram or WhatsApp. The MVP supports two invocation paths:
 
 1. Paste a plain YouTube URL into a Discord DM or private channel.
-2. Use `/learn url:<youtube-url>` for an explicit command.
+2. Use `/learn url:<youtube-url> extra_prompt:<optional-focus-or-question>` for an explicit command.
 
-Both paths call the same shared extraction pipeline: parse video ID, fetch transcript, ask OpenAI for structured learning notes, save a markdown file locally, and return the markdown as a Discord attachment.
+Both paths call the same shared extraction pipeline: parse video ID, fetch transcript, ask OpenAI for structured learning notes, save a markdown file locally, and return the markdown as a Discord attachment. The optional `/learn` extra prompt focuses the generated notes on user-requested information and is saved as a separate prompted artifact from the generic video notes.
 
 Channel watching, `/watch add`, `/watch list`, and `/latest` are intentionally deferred until the manual URL workflow is reliable.
 
@@ -101,10 +101,10 @@ Attachment: <video-title>.md
 User sends:
 
 ```text
-/learn url:https://youtube.com/watch?v=abc123
+/learn url:https://youtube.com/watch?v=abc123 extra_prompt:"focus on deployment advice"
 ```
 
-Bot behavior is the same as the plain URL path. The slash command is useful when the bot should only act on explicit requests or when a server channel contains other YouTube links that should be ignored.
+Bot behavior is the same as the plain URL path when no extra prompt is provided. When `extra_prompt` is provided, the worker generates a separate artifact for that focused request instead of reusing the generic notes.
 
 ---
 

@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import time
+from typing import Protocol, cast, runtime_checkable
 
 import discord
 
@@ -19,14 +20,49 @@ from app.transcript import TranscriptFetchError, TranscriptUnavailableError, Uns
 LOGGER = logging.getLogger(__name__)
 
 
+class ProcessorProtocol(Protocol):
+    async def process_video(
+        self,
+        video_url: str,
+        requested_by: str,
+        extra_prompt: str | None = None,
+    ) -> ProcessedVideo: ...
+
+
+class DiscordMessageTarget(Protocol):
+    async def send(
+        self,
+        content: str | None = None,
+        *,
+        file: discord.File | None = None,
+        reference: object | None = None,
+        mention_author: bool | None = None,
+    ) -> object: ...
+
+
+@runtime_checkable
+class PartialMessageTarget(Protocol):
+    def get_partial_message(self, message_id: int) -> object: ...
+
+
+class DiscordClientProtocol(Protocol):
+    async def fetch_channel(self, channel_id: int, /) -> object: ...
+
+    async def fetch_user(self, user_id: int, /) -> object: ...
+
+    async def wait_until_ready(self) -> None: ...
+
+    def is_closed(self) -> bool: ...
+
+
 class WorkerService:
     def __init__(
         self,
         *,
         settings: Settings,
         queue: JobQueue,
-        processor: VideoProcessor,
-        discord_client: discord.Client,
+        processor: ProcessorProtocol,
+        discord_client: DiscordClientProtocol,
         watch_repository: WatchRepository | None = None,
         telemetry=None,
     ) -> None:
@@ -53,7 +89,11 @@ class WorkerService:
 
         started = time.perf_counter()
         try:
-            result = await self.processor.process_video(job.video_url, requested_by=job.requested_by)
+            result = await self.processor.process_video(
+                job.video_url,
+                requested_by=job.requested_by,
+                extra_prompt=job.extra_prompt,
+            )
         except Exception as exc:
             failed_job = self.queue.mark_failed(job.id, error=self._error_text(exc))
             self.telemetry.record_job_processed(
@@ -153,10 +193,10 @@ class WorkerService:
         except discord.DiscordException:
             LOGGER.exception("Unable to send failure notification for job %s", job.id)
 
-    async def _resolve_channel(self, job: Job):
+    async def _resolve_channel(self, job: Job) -> DiscordMessageTarget | None:
         if job.reply_channel_id is not None:
             try:
-                return await self.discord_client.fetch_channel(job.reply_channel_id)
+                return cast(DiscordMessageTarget, await self.discord_client.fetch_channel(job.reply_channel_id))
             except discord.DiscordException:
                 LOGGER.exception("Unable to fetch reply channel for job %s", job.id)
 
@@ -165,10 +205,10 @@ class WorkerService:
         except (ValueError, discord.DiscordException):
             LOGGER.exception("Unable to fetch fallback user for job %s", job.id)
             return None
-        return user
+        return cast(DiscordMessageTarget, user)
 
-    def _notification_reference(self, job: Job, channel):
-        if job.reply_message_id is None or not hasattr(channel, "get_partial_message"):
+    def _notification_reference(self, job: Job, channel: object) -> object | None:
+        if job.reply_message_id is None or not isinstance(channel, PartialMessageTarget):
             return None
         return channel.get_partial_message(job.reply_message_id)
 
@@ -191,9 +231,24 @@ class WorkerService:
 
 
 class WorkerBot(discord.Client):
-    def __init__(self, *, service: WorkerService) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        queue: JobQueue,
+        processor: ProcessorProtocol,
+        watch_repository: WatchRepository | None = None,
+        telemetry=None,
+    ) -> None:
         super().__init__(intents=discord.Intents.none())
-        self.service = service
+        self.service = WorkerService(
+            settings=settings,
+            queue=queue,
+            processor=processor,
+            discord_client=self,
+            watch_repository=watch_repository,
+            telemetry=telemetry,
+        )
         self._task: asyncio.Task[None] | None = None
 
     async def setup_hook(self) -> None:
@@ -242,16 +297,12 @@ def main() -> int:
         return 0
 
     bot = WorkerBot(
-        service=WorkerService(
-            settings=settings,
-            queue=queue,
-            processor=processor,
-            discord_client=None,  # type: ignore[arg-type]
-            watch_repository=watch_repository,
-            telemetry=configure_telemetry("yt-learner-worker"),
-        )
+        settings=settings,
+        queue=queue,
+        processor=processor,
+        watch_repository=watch_repository,
+        telemetry=configure_telemetry("yt-learner-worker"),
     )
-    bot.service.discord_client = bot
     bot.run(settings.discord_bot_token)
     return 0
 

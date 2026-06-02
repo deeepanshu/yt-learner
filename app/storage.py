@@ -85,7 +85,7 @@ class OutputStore:
             if record.artifact_path.exists():
                 return record
 
-        if source_type == "youtube_url":
+        if source_type == "youtube_url" and record_type == "notes":
             legacy_path = self._find_legacy_markdown(source_key)
             if legacy_path is None:
                 return None
@@ -116,9 +116,11 @@ class OutputStore:
         title: str,
         video_id: str,
         processed_at: datetime | None = None,
+        filename_suffix: str | None = None,
     ) -> Path:
         timestamp = (processed_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
-        filename = f"{timestamp}__{slugify(title)}__{video_id}.md"
+        suffix = f"__{slugify(filename_suffix)}" if filename_suffix else ""
+        filename = f"{timestamp}__{slugify(title)}__{video_id}{suffix}.md"
         return self.root / filename
 
     def save_markdown(
@@ -130,8 +132,14 @@ class OutputStore:
         markdown: str,
         requested_by: str,
         processed_at: datetime | None = None,
+        record_type: str = "notes",
+        filename_suffix: str | None = None,
     ) -> StoredDocument:
-        existing = self.find_existing_learning_record(source_type="youtube_url", source_key=video_id)
+        existing = self.find_existing_learning_record(
+            source_type="youtube_url",
+            source_key=video_id,
+            record_type=record_type,
+        )
         if existing is not None:
             return StoredDocument(
                 learning_record_id=existing.id,
@@ -145,13 +153,14 @@ class OutputStore:
             title=title,
             video_id=video_id,
             processed_at=processed_timestamp,
+            filename_suffix=filename_suffix,
         )
         output_path.write_text(markdown, encoding="utf-8")
         learning_record_id = self._upsert_learning_record(
             source_type="youtube_url",
             source_key=video_id,
             source_ref=source_url,
-            record_type="notes",
+            record_type=record_type,
             title=title,
             artifact_path=output_path,
             requested_by=requested_by,

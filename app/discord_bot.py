@@ -120,7 +120,9 @@ class LearnerBot(discord.Client):
                 guild_id=str(interaction.guild_id),
                 extra_prompt=normalized_extra_prompt,
             )
-            await interaction.response.send_message(self._queued_text(job.id, parsed.canonical_url))
+            await interaction.response.send_message(
+                self._learning_status_text(parsed.canonical_url, normalized_extra_prompt)
+            )
             response_message = await interaction.original_response()
             self.queue.update_reply_message_id(job.id, reply_message_id=response_message.id)
 
@@ -366,7 +368,8 @@ class LearnerBot(discord.Client):
             reply_channel_id=getattr(message.channel, "id", None),
             guild_id=str(getattr(message.guild, "id", "")),
         )
-        await message.channel.send(self._queued_text(job.id, parsed.canonical_url))
+        status_message = await message.channel.send(self._learning_status_text(parsed.canonical_url, None))
+        self.queue.update_reply_message_id(job.id, reply_message_id=status_message.id)
 
     async def _maybe_enqueue_thread_question(self, message: discord.Message) -> bool:
         question = " ".join(message.content.split())
@@ -387,7 +390,8 @@ class LearnerBot(discord.Client):
             reply_message_id=message.id,
             guild_id=str(getattr(message.guild, "id", thread_record.guild_id)),
         )
-        await message.channel.send(f"Queued question #{job.id}", reference=message, mention_author=False)
+        thinking_message = await message.channel.send("Thinking...", reference=message, mention_author=False)
+        self.queue.update_reply_message_id(job.id, reply_message_id=thinking_message.id)
         return True
 
     def _is_allowed_interaction(self, interaction: discord.Interaction) -> bool:
@@ -455,8 +459,10 @@ class LearnerBot(discord.Client):
         self.telemetry.record_job_enqueued(source=source)
         return job
 
-    def _queued_text(self, job_id: int, url: str) -> str:
-        return f"Queued job #{job_id} for {url}"
+    def _learning_status_text(self, url: str, extra_prompt: str | None) -> str:
+        if extra_prompt:
+            return f"Checking '{_preview_text(extra_prompt, limit=120)}' from {url}"
+        return f"Learning from {url}"
 
     def _format_subscription_list(self, subscriptions) -> str:
         return "\n".join(

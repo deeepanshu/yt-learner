@@ -75,6 +75,7 @@ class FakeQuestionChannel:
 
     async def send(self, content=None, reference=None, mention_author=None):
         self.sent.append((content, reference, mention_author))
+        return type("Message", (), {"id": 4444})()
 
 
 class DummyWatchRepository:
@@ -130,9 +131,13 @@ def test_enqueue_job_uses_queue_and_formats_reply() -> None:
             "extra_prompt": None,
         }
     ]
-    assert bot._queued_text(7, "https://www.youtube.com/watch?v=abc123xyz") == (
-        "Queued job #7 for https://www.youtube.com/watch?v=abc123xyz"
+    assert bot._learning_status_text("https://www.youtube.com/watch?v=abc123xyz", None) == (
+        "Learning from https://www.youtube.com/watch?v=abc123xyz"
     )
+    assert bot._learning_status_text(
+        "https://www.youtube.com/watch?v=abc123xyz",
+        "focus on deployment advice",
+    ) == "Checking 'focus on deployment advice' from https://www.youtube.com/watch?v=abc123xyz"
 
 
 def test_enqueue_job_forwards_normalized_extra_prompt() -> None:
@@ -189,7 +194,8 @@ def test_thread_question_is_enqueued() -> None:
             "guild_id": "guild-1",
         }
     ]
-    assert channel.sent == [("Queued question #9", message, False)]
+    assert queue.reply_updates == [(9, 4444)]
+    assert channel.sent == [("Thinking...", message, False)]
 
 
 def run_async(awaitable):

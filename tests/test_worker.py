@@ -45,13 +45,29 @@ class StubProcessor:
         )
 
 
+class FakeMessage:
+    def __init__(self, message_id: int) -> None:
+        self.id = message_id
+        self.edits: list[tuple[str | None, list[object] | None]] = []
+
+    async def edit(self, *, content: str | None = None, attachments: list[object] | None = None) -> object:
+        self.edits.append((content, attachments))
+        return self
+
+    def __eq__(self, other: object) -> bool:
+        return other == f"partial:{self.id}"
+
+
 class FakeChannel:
     def __init__(self, channel_id: int = 1001) -> None:
         self.id = channel_id
         self.messages: list[tuple[str | None, object | None, object | None, bool | None]] = []
+        self.partial_messages: dict[int, FakeMessage] = {}
 
-    def get_partial_message(self, message_id: int) -> object:
-        return f"partial:{message_id}"
+    def get_partial_message(self, message_id: int) -> FakeMessage:
+        if message_id not in self.partial_messages:
+            self.partial_messages[message_id] = FakeMessage(message_id)
+        return self.partial_messages[message_id]
 
     async def send(
         self,
@@ -168,10 +184,9 @@ def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
     assert completed.learning_record_id == 77
     discovered = repository.list_discovered_videos(subscription_id=subscription.id)
     assert discovered[0].learning_record_id == 77
-    assert channel.messages[0][0] == f"Done for job #{job.id}: Demo"
-    assert channel.messages[0][1] is not None
-    assert channel.messages[0][2] == "partial:2222"
-    assert channel.messages[0][3] is False
+    assert channel.messages == []
+    assert channel.partial_messages[2222].edits[0][0] == "Done: Demo"
+    assert channel.partial_messages[2222].edits[0][1] is not None
     assert processor.last_extra_prompt is None
 
 
@@ -265,8 +280,8 @@ def test_worker_answers_video_question_job(tmp_path) -> None:
     assert completed is not None
     assert completed.id == job.id
     assert processor.last_question == "What about deployment?"
-    assert thread.messages[0][0] == "Answer: What about deployment?"
-    assert thread.messages[0][2] == "partial:3333"
+    assert thread.messages == []
+    assert thread.partial_messages[3333].edits == [("Answer: What about deployment?", None)]
 
 
 def test_worker_sends_long_video_question_answer_as_attachment(tmp_path) -> None:
@@ -320,9 +335,9 @@ def test_worker_sends_long_video_question_answer_as_attachment(tmp_path) -> None
 
     run_async(service.run_next_job())
 
-    assert thread.messages[0][0] == f"Answer for job #{job.id} is attached."
-    assert thread.messages[0][1] is not None
-    assert thread.messages[0][2] == "partial:3333"
+    assert thread.messages == []
+    assert thread.partial_messages[3333].edits[0][0] == "Answer attached."
+    assert thread.partial_messages[3333].edits[0][1] is not None
 
 
 def test_worker_creates_discord_thread_for_guild_job(tmp_path) -> None:
@@ -372,7 +387,7 @@ def test_worker_creates_discord_thread_for_guild_job(tmp_path) -> None:
     assert len(parent.created_threads) == 1
     thread = parent.created_threads[0]
     assert thread.name == "Demo Video"
-    assert thread.messages[0][0] == f"Done for job #{job.id}: Demo Video"
+    assert thread.messages[0][0] == "Done: Demo Video"
     assert thread.messages[0][2] is None
     saved = thread_repository.find_thread(
         guild_id="guild-1",
@@ -436,7 +451,7 @@ def test_worker_reuses_existing_discord_thread(tmp_path) -> None:
     run_async(service.run_next_job())
 
     assert parent.created_threads == []
-    assert existing_thread.messages[0][0] == f"Done for job #{job.id}: Demo Video"
+    assert existing_thread.messages[0][0] == "Done: Demo Video"
 
 
 def run_async(awaitable):

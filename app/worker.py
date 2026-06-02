@@ -59,6 +59,15 @@ class DiscordMessageTarget(Protocol):
     ) -> object: ...
 
 
+class EditableMessage(Protocol):
+    async def edit(
+        self,
+        *,
+        content: str | None = None,
+        attachments: list[object] | None = None,
+    ) -> object: ...
+
+
 @runtime_checkable
 class ThreadParentTarget(DiscordMessageTarget, Protocol):
     async def create_thread(
@@ -71,7 +80,7 @@ class ThreadParentTarget(DiscordMessageTarget, Protocol):
 
 @runtime_checkable
 class PartialMessageTarget(Protocol):
-    def get_partial_message(self, message_id: int) -> object: ...
+    def get_partial_message(self, message_id: int) -> EditableMessage: ...
 
 
 @dataclass(frozen=True)
@@ -233,24 +242,35 @@ class WorkerService:
             result.output_path,
             type(target.channel).__name__,
         )
+        content = f"{prefix}: {result.title}"
+        if target.use_reply_reference and await self._try_edit_status_message(
+            job,
+            content=content,
+            file=discord.File(result.output_path),
+        ):
+            return
+
         reference = self._notification_reference(job, target.channel) if target.use_reply_reference else None
         await target.channel.send(
-            content=f"{prefix} for job #{job.id}: {result.title}",
+            content=content,
             file=discord.File(result.output_path),
             reference=reference,
             mention_author=False,
         )
+        if not target.use_reply_reference:
+            await self._try_edit_status_message(job, content=f"{content} — posted in the video thread.")
 
     async def _notify_question_answer(self, job: Job, result: AnsweredVideoQuestion) -> None:
         channel = await self._resolve_channel(job)
         if channel is None:
             LOGGER.info("worker_question_notification_skipped job_id=%s reason=no_channel", job.id)
             return
-        reference = self._notification_reference(job, channel)
         if len(result.markdown) <= MAX_DISCORD_INLINE_MESSAGE_CHARS:
+            if await self._try_edit_status_message(job, content=result.markdown):
+                return
             await channel.send(
                 result.markdown,
-                reference=reference,
+                reference=self._notification_reference(job, channel),
                 mention_author=False,
             )
             return
@@ -259,10 +279,16 @@ class WorkerService:
             io.BytesIO(result.markdown.encode("utf-8")),
             filename=f"job-{job.id}-answer.md",
         )
-        await channel.send(
-            content=f"Answer for job #{job.id} is attached.",
+        if await self._try_edit_status_message(
+            job,
+            content="Answer attached.",
             file=answer_file,
-            reference=reference,
+        ):
+            return
+        await channel.send(
+            content="Answer attached.",
+            file=answer_file,
+            reference=self._notification_reference(job, channel),
             mention_author=False,
         )
 
@@ -353,6 +379,33 @@ class WorkerService:
             LOGGER.exception("Unable to fetch fallback user for job %s", job.id)
             return None
         return cast(DiscordMessageTarget, user)
+
+    async def _try_edit_status_message(
+        self,
+        job: Job,
+        *,
+        content: str,
+        file: discord.File | None = None,
+    ) -> bool:
+        if job.reply_channel_id is None or job.reply_message_id is None:
+            return False
+        try:
+            channel = await self.discord_client.fetch_channel(job.reply_channel_id)
+        except discord.DiscordException:
+            LOGGER.exception("Unable to fetch status channel for job %s", job.id)
+            return False
+        if not isinstance(channel, PartialMessageTarget):
+            return False
+        try:
+            message = channel.get_partial_message(job.reply_message_id)
+            if file is None:
+                await message.edit(content=content)
+            else:
+                await message.edit(content=content, attachments=[file])
+        except discord.DiscordException:
+            LOGGER.exception("Unable to edit status message for job %s", job.id)
+            return False
+        return True
 
     def _notification_reference(self, job: Job, channel: object) -> object | None:
         if job.reply_message_id is None or not isinstance(channel, PartialMessageTarget):

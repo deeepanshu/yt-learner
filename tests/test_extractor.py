@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 from typing import cast
 
-from app.extractor import ExtractionInput, SYSTEM_PROMPT, build_messages
+from app.extractor import CUSTOM_PROMPT_SYSTEM_PROMPT, ExtractionInput, SYSTEM_PROMPT, build_messages
 from app.transcript import TranscriptData, TranscriptSegment
 
 
@@ -37,7 +37,7 @@ def test_build_messages_uses_expected_structure() -> None:
     assert "Additional user request:" not in content
 
 
-def test_build_messages_includes_extra_prompt() -> None:
+def test_build_messages_uses_custom_prompt_instead_of_default_structure() -> None:
     payload = ExtractionInput(
         title="Video Title",
         url="https://www.youtube.com/watch?v=abc123xyz",
@@ -51,9 +51,11 @@ def test_build_messages_includes_extra_prompt() -> None:
         max_transcript_chars=None,
     )
 
+    assert messages[0] == {"role": "system", "content": CUSTOM_PROMPT_SYSTEM_PROMPT}
+    assert "Use this structure exactly" not in message_content(messages[0])
     content = message_content(messages[1])
-    assert "Additional user request:\nfocus on deployment advice" in content
-    assert "only include information supported by the transcript" in content
+    assert "User request:\nfocus on deployment advice" in content
+    assert "Additional user request:" not in content
 
 
 def test_build_messages_truncates_transcript() -> None:

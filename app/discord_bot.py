@@ -115,6 +115,7 @@ class LearnerBot(discord.Client):
                 requested_by=str(interaction.user.id),
                 source="discord_slash_command",
                 reply_channel_id=getattr(interaction.channel, "id", None),
+                guild_id=str(interaction.guild_id),
                 extra_prompt=normalized_extra_prompt,
             )
             await interaction.response.send_message(self._queued_text(job.id, parsed.canonical_url))
@@ -359,6 +360,7 @@ class LearnerBot(discord.Client):
             requested_by=str(message.author.id),
             source="discord_message",
             reply_channel_id=getattr(message.channel, "id", None),
+            guild_id=str(getattr(message.guild, "id", "")),
         )
         await message.channel.send(self._queued_text(job.id, parsed.canonical_url))
 
@@ -402,6 +404,7 @@ class LearnerBot(discord.Client):
         source: str,
         reply_channel_id: int | None,
         reply_message_id: int | None = None,
+        guild_id: str | None = None,
         extra_prompt: str | None = None,
     ) -> Job:
         normalized_extra_prompt = normalize_extra_prompt(extra_prompt)
@@ -411,6 +414,7 @@ class LearnerBot(discord.Client):
             source=source,
             reply_channel_id=reply_channel_id,
             reply_message_id=reply_message_id,
+            guild_id=guild_id,
             extra_prompt=normalized_extra_prompt,
         )
         LOGGER.info(

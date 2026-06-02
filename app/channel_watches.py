@@ -49,6 +49,130 @@ class WatchedVideo:
     learning_record_id: int | None
 
 
+@dataclass(frozen=True)
+class VideoThread:
+    id: int
+    guild_id: str
+    parent_channel_id: int
+    video_id: str
+    thread_id: int
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class VideoThreadRepository:
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = db_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def find_thread(
+        self,
+        *,
+        guild_id: str,
+        parent_channel_id: int,
+        video_id: str,
+    ) -> VideoThread | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM video_threads
+                WHERE guild_id = ? AND parent_channel_id = ? AND video_id = ?
+                """,
+                (guild_id, parent_channel_id, video_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_video_thread(row)
+
+    def save_thread(
+        self,
+        *,
+        guild_id: str,
+        parent_channel_id: int,
+        video_id: str,
+        thread_id: int,
+        title: str,
+    ) -> VideoThread:
+        timestamp = utc_now()
+        serialized_timestamp = _serialize_timestamp(timestamp) or timestamp.isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO video_threads (
+                    guild_id,
+                    parent_channel_id,
+                    video_id,
+                    thread_id,
+                    title,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, parent_channel_id, video_id)
+                DO UPDATE SET
+                    thread_id = excluded.thread_id,
+                    title = excluded.title,
+                    updated_at = excluded.updated_at
+                RETURNING *
+                """,
+                (
+                    guild_id,
+                    parent_channel_id,
+                    video_id,
+                    thread_id,
+                    title,
+                    serialized_timestamp,
+                    serialized_timestamp,
+                ),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Unable to save video thread")
+        return self._row_to_video_thread(row)
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _initialize(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS video_threads (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id TEXT NOT NULL,
+                    parent_channel_id INTEGER NOT NULL,
+                    video_id TEXT NOT NULL,
+                    thread_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(guild_id, parent_channel_id, video_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_video_threads_thread_id
+                ON video_threads(thread_id)
+                """
+            )
+
+    def _row_to_video_thread(self, row: sqlite3.Row) -> VideoThread:
+        return VideoThread(
+            id=int(row["id"]),
+            guild_id=str(row["guild_id"]),
+            parent_channel_id=int(row["parent_channel_id"]),
+            video_id=str(row["video_id"]),
+            thread_id=int(row["thread_id"]),
+            title=str(row["title"]),
+            created_at=_parse_timestamp(row["created_at"]) or utc_now(),
+            updated_at=_parse_timestamp(row["updated_at"]) or utc_now(),
+        )
+
+
 class WatchRepository:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path

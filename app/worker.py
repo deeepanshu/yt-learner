@@ -4,11 +4,12 @@ import argparse
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Protocol, cast, runtime_checkable
 
 import discord
 
-from app.channel_watches import WatchRepository
+from app.channel_watches import VideoThreadRepository, WatchRepository
 from app.config import Settings, load_settings
 from app.discord_bot import build_processor
 from app.extractor import ExtractionError
@@ -18,6 +19,14 @@ from app.telemetry import NoopTelemetry, configure_logging, configure_telemetry
 from app.transcript import TranscriptFetchError, TranscriptUnavailableError, UnsupportedVideoError
 
 LOGGER = logging.getLogger(__name__)
+MAX_THREAD_TITLE_CHARS = 100
+
+
+def format_thread_title(title: str) -> str:
+    cleaned = " ".join(title.split()) or "YouTube video"
+    if len(cleaned) <= MAX_THREAD_TITLE_CHARS:
+        return cleaned
+    return cleaned[: MAX_THREAD_TITLE_CHARS - 3].rstrip() + "..."
 
 
 class ProcessorProtocol(Protocol):
@@ -41,8 +50,24 @@ class DiscordMessageTarget(Protocol):
 
 
 @runtime_checkable
+class ThreadParentTarget(DiscordMessageTarget, Protocol):
+    async def create_thread(
+        self,
+        *,
+        name: str,
+        type: discord.ChannelType | None = None,
+    ) -> object: ...
+
+
+@runtime_checkable
 class PartialMessageTarget(Protocol):
     def get_partial_message(self, message_id: int) -> object: ...
+
+
+@dataclass(frozen=True)
+class NotificationTarget:
+    channel: DiscordMessageTarget
+    use_reply_reference: bool
 
 
 class DiscordClientProtocol(Protocol):
@@ -64,6 +89,7 @@ class WorkerService:
         processor: ProcessorProtocol,
         discord_client: DiscordClientProtocol,
         watch_repository: WatchRepository | None = None,
+        video_thread_repository: VideoThreadRepository | None = None,
         telemetry=None,
     ) -> None:
         self.settings = settings
@@ -71,6 +97,7 @@ class WorkerService:
         self.processor = processor
         self.discord_client = discord_client
         self.watch_repository = watch_repository
+        self.video_thread_repository = video_thread_repository or VideoThreadRepository(settings.db_path)
         self.telemetry = telemetry or NoopTelemetry()
 
     async def run_next_job(self) -> Job | None:
@@ -150,8 +177,8 @@ class WorkerService:
                 await asyncio.sleep(poll_interval_seconds)
 
     async def _notify_success(self, job: Job, result: ProcessedVideo) -> None:
-        channel = await self._resolve_channel(job)
-        if channel is None:
+        target = await self._resolve_success_target(job, result)
+        if target is None:
             LOGGER.info("worker_success_notification_skipped job_id=%s reason=no_channel", job.id)
             return
         prefix = "Reused existing notes" if result.reused_existing else "Done"
@@ -159,10 +186,10 @@ class WorkerService:
             "worker_success_notification_started job_id=%s attachment_path=%s channel_type=%s",
             job.id,
             result.output_path,
-            type(channel).__name__,
+            type(target.channel).__name__,
         )
-        reference = self._notification_reference(job, channel)
-        await channel.send(
+        reference = self._notification_reference(job, target.channel) if target.use_reply_reference else None
+        await target.channel.send(
             content=f"{prefix} for job #{job.id}: {result.title}",
             file=discord.File(result.output_path),
             reference=reference,
@@ -192,6 +219,50 @@ class WorkerService:
             await self._notify_failure(job)
         except discord.DiscordException:
             LOGGER.exception("Unable to send failure notification for job %s", job.id)
+
+    async def _resolve_success_target(self, job: Job, result: ProcessedVideo) -> NotificationTarget | None:
+        if job.guild_id is None or job.reply_channel_id is None:
+            channel = await self._resolve_channel(job)
+            if channel is None:
+                return None
+            return NotificationTarget(channel=channel, use_reply_reference=True)
+
+        existing = self.video_thread_repository.find_thread(
+            guild_id=job.guild_id,
+            parent_channel_id=job.reply_channel_id,
+            video_id=result.video_id,
+        )
+        if existing is not None:
+            try:
+                thread = await self.discord_client.fetch_channel(existing.thread_id)
+                return NotificationTarget(channel=cast(DiscordMessageTarget, thread), use_reply_reference=False)
+            except discord.DiscordException:
+                LOGGER.exception("Unable to fetch existing video thread for job %s", job.id)
+
+        parent = await self._resolve_channel(job)
+        if parent is None:
+            return None
+        if not isinstance(parent, ThreadParentTarget):
+            return NotificationTarget(channel=parent, use_reply_reference=True)
+
+        thread_name = format_thread_title(result.title)
+        try:
+            thread = await parent.create_thread(name=thread_name, type=discord.ChannelType.public_thread)
+        except discord.DiscordException:
+            LOGGER.exception("Unable to create video thread for job %s", job.id)
+            return NotificationTarget(channel=parent, use_reply_reference=True)
+        thread_id = getattr(thread, "id", None)
+        if thread_id is None:
+            LOGGER.info("worker_video_thread_untracked job_id=%s reason=missing_thread_id", job.id)
+            return NotificationTarget(channel=cast(DiscordMessageTarget, thread), use_reply_reference=False)
+        self.video_thread_repository.save_thread(
+            guild_id=job.guild_id,
+            parent_channel_id=job.reply_channel_id,
+            video_id=result.video_id,
+            thread_id=int(thread_id),
+            title=thread_name,
+        )
+        return NotificationTarget(channel=cast(DiscordMessageTarget, thread), use_reply_reference=False)
 
     async def _resolve_channel(self, job: Job) -> DiscordMessageTarget | None:
         if job.reply_channel_id is not None:

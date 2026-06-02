@@ -94,6 +94,7 @@ def test_enqueue_job_uses_queue_and_formats_reply() -> None:
             "source": "discord_message",
             "reply_channel_id": 999,
             "reply_message_id": None,
+            "guild_id": None,
             "extra_prompt": None,
         }
     ]
@@ -111,9 +112,11 @@ def test_enqueue_job_forwards_normalized_extra_prompt() -> None:
         requested_by="42",
         source="discord_slash_command",
         reply_channel_id=999,
+        guild_id="guild-1",
         extra_prompt="  focus   on deployment advice  ",
     )
 
+    assert queue.calls[0]["guild_id"] == "guild-1"
     assert queue.calls[0]["extra_prompt"] == "focus on deployment advice"
 
 

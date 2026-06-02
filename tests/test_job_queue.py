@@ -21,6 +21,7 @@ def test_enqueue_and_claim_job(tmp_path) -> None:
     assert claimed.video_url == "https://www.youtube.com/watch?v=abc123xyz"
     assert claimed.reply_channel_id == 12345
     assert claimed.reply_message_id == 67890
+    assert claimed.guild_id is None
     assert claimed.extra_prompt is None
 
 
@@ -60,10 +61,13 @@ def test_enqueue_job_stores_extra_prompt(tmp_path) -> None:
         requested_by="user-1",
         source="discord_slash_command",
         reply_channel_id=12345,
+        guild_id="guild-1",
         extra_prompt="focus on deployment advice",
     )
 
+    assert queued.guild_id == "guild-1"
     assert queued.extra_prompt == "focus on deployment advice"
+    assert queue.get_job(queued.id).guild_id == "guild-1"
     assert queue.get_job(queued.id).extra_prompt == "focus on deployment advice"
 
 

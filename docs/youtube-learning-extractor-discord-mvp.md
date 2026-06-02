@@ -12,7 +12,7 @@ Build the first version of the YouTube Learning Extractor as a Discord bot inste
 1. Paste a plain YouTube URL into a Discord DM or private channel.
 2. Use `/learn url:<youtube-url> extra_prompt:<optional-focus-or-question>` for an explicit command.
 
-Both paths call the same shared extraction pipeline: parse video ID, fetch transcript, ask OpenAI for structured learning notes, save a markdown file locally, and return the markdown as a Discord attachment. The optional `/learn` extra prompt focuses the generated notes on user-requested information and is saved as a separate prompted artifact from the generic video notes.
+Both paths call the same shared extraction pipeline: parse video ID, fetch transcript, ask OpenAI, save a markdown file locally, and return the markdown as a Discord attachment in a per-video thread when possible. Without an extra prompt the bot creates structured learning notes. With an extra prompt the bot answers that request from the transcript and saves it as a separate prompted artifact from the generic video notes.
 
 Channel watching, `/watch add`, `/watch list`, and `/latest` are intentionally deferred until the manual URL workflow is reliable.
 
@@ -104,7 +104,7 @@ User sends:
 /learn url:https://youtube.com/watch?v=abc123 extra_prompt:"focus on deployment advice"
 ```
 
-Bot behavior is the same as the plain URL path when no extra prompt is provided. When `extra_prompt` is provided, the worker generates a separate artifact for that focused request instead of reusing the generic notes.
+Bot behavior is the same as the plain URL path when no extra prompt is provided. When `extra_prompt` is provided, the worker generates a separate artifact for that focused request instead of reusing the generic notes. Completed outputs are posted into a reusable per-video thread under the destination channel when Discord allows thread creation.
 
 ---
 

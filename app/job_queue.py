@@ -61,6 +61,13 @@ class Job:
         return int(raw)
 
     @property
+    def guild_id(self) -> str | None:
+        raw = self.input_data.get("guild_id")
+        if raw is None:
+            return None
+        return str(raw)
+
+    @property
     def reply_message_id(self) -> int | None:
         raw = self.input_data.get("reply_message_id")
         if raw is None:
@@ -90,6 +97,7 @@ class JobQueue:
         source: str,
         reply_channel_id: int | None,
         reply_message_id: int | None = None,
+        guild_id: str | None = None,
         extra_prompt: str | None = None,
         priority: int = 0,
     ) -> Job:
@@ -98,6 +106,7 @@ class JobQueue:
             "video_url": video_url,
             "reply_channel_id": reply_channel_id,
             "reply_message_id": reply_message_id,
+            "guild_id": guild_id,
         }
         if extra_prompt is not None:
             input_data["extra_prompt"] = extra_prompt

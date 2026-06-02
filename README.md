@@ -55,7 +55,7 @@ Useful operational commands:
 The app still has two long-lived app processes and one scheduled process:
 
 - `yt-learner-discord`: accepts Discord messages and slash commands, validates input, and enqueues jobs
-- `yt-learner-worker`: claims queued jobs from SQLite, runs the extraction pipeline, and posts the result back to Discord
+- `yt-learner-worker`: claims queued jobs from SQLite, runs the extraction pipeline, and posts the result into a per-video Discord thread when possible
 - `yt-learner-scheduler`: runs channel discovery on a daily wall-clock schedule and enqueues new work
 
 In normal deployment all three containers should be running. If only the bot is running, jobs will queue but never complete. If only the worker is running, existing queued jobs will still process, but you will not be able to add or remove watches from Discord. If the scheduler is not running, watched channels will stop enqueueing new uploads.
@@ -63,7 +63,8 @@ In normal deployment all three containers should be running. If only the bot is 
 Access policy:
 
 - anyone in a server where the bot is installed can use `/learn` or plain YouTube URL messages
-- `/learn` accepts an optional `extra_prompt` field for focusing the generated notes on a specific question or topic; prompted requests are saved as separate artifacts from the generic video notes
+- `/learn` accepts an optional `extra_prompt` field for answering a specific question from the transcript; prompted requests are saved as separate artifacts from the generic video notes
+- completed jobs are posted into a reusable per-video Discord thread under the destination channel when the bot can create one; otherwise the bot falls back to the destination channel
 - direct messages to the bot are ignored
 - if `DISCORD_ALLOWED_CHANNEL_ID` is set, manual learning requests are limited to that one channel
 - watched channel management is server-only and requires Discord `Manage Server` permission

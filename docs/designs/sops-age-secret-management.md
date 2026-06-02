@@ -70,6 +70,31 @@ Important Compose behavior:
 - The public Compose file reveals variable names, but not secret values or private file paths.
 - Do not put the encrypted secret file path in `docker-compose.yml` for public repos.
 
+### Why Not Put the SOPS File in Compose?
+
+Do not make the encrypted SOPS file an `env_file` entry in the committed Compose file:
+
+```yaml
+# Avoid this in a public repo.
+env_file:
+  - /home/deepanshu/secrets/yt-shared.enc.env
+```
+
+That has two problems:
+
+1. `env_file` expects plaintext dotenv content. It does not decrypt SOPS files, so containers would receive encrypted values or fail to parse the file.
+2. The public repo would expose the private host path and secret-management layout.
+
+Docker Compose `secrets:` has a similar tradeoff for this use case: it still needs a source file path, and that source must be plaintext by the time Docker reads it. That can work for Swarm or a private deployment repository, but it does not solve the public-repo path exposure problem.
+
+If Compose-specific secret wiring is desired, keep it in an uncommitted override file, for example `compose.private.yml`, and run:
+
+```bash
+sops exec-env "$SECRETS_FILE" 'docker compose -f docker-compose.yml -f compose.private.yml up -d --build'
+```
+
+For this public repo, the preferred committed contract is only env var names in Compose plus host-side `sops exec-env` injection.
+
 ## Local `uv run` Integration
 
 The same secret file can run local commands:

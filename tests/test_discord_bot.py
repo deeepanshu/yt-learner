@@ -3,7 +3,7 @@ from typing import cast
 
 import discord
 
-from app.channel_watches import WatchRepository
+from app.channel_watches import VideoThreadRepository, WatchRepository
 from app.config import Settings
 from app.discord_bot import LearnerBot, extract_youtube_url, normalize_extra_prompt
 from app.job_queue import JobQueue
@@ -23,11 +23,16 @@ def make_bot(
     *,
     queue: "DummyQueue | None" = None,
     watch_repository: "DummyWatchRepository | None" = None,
+    video_thread_repository: "DummyVideoThreadRepository | None" = None,
 ) -> LearnerBot:
     return LearnerBot(
         settings=dummy_settings(),
         queue=cast(JobQueue, queue or DummyQueue()),
         watch_repository=cast(WatchRepository, watch_repository or DummyWatchRepository()),
+        video_thread_repository=cast(
+            VideoThreadRepository,
+            video_thread_repository or DummyVideoThreadRepository(),
+        ),
     )
 
 
@@ -43,6 +48,33 @@ class DummyQueue:
     def update_reply_message_id(self, job_id: int, *, reply_message_id: int):
         self.reply_updates.append((job_id, reply_message_id))
         return type("Job", (), {"id": job_id})()
+
+    def enqueue_answer_video_question(self, **kwargs):
+        self.calls.append(kwargs)
+        return type("Job", (), {"id": 9})()
+
+
+class DummyVideoThreadRecord:
+    video_id = "abc123xyz"
+    guild_id = "guild-1"
+
+
+class DummyVideoThreadRepository:
+    def __init__(self) -> None:
+        self.thread_record: object | None = None
+
+    def find_thread_by_thread_id(self, thread_id: int):
+        return self.thread_record
+
+
+class FakeQuestionChannel:
+    id = 2002
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str | None, object | None, bool | None]] = []
+
+    async def send(self, content=None, reference=None, mention_author=None):
+        self.sent.append((content, reference, mention_author))
 
 
 class DummyWatchRepository:
@@ -123,6 +155,47 @@ def test_enqueue_job_forwards_normalized_extra_prompt() -> None:
 def test_normalize_extra_prompt_handles_empty_values() -> None:
     assert normalize_extra_prompt(None) is None
     assert normalize_extra_prompt("   ") is None
+
+
+def test_thread_question_is_enqueued() -> None:
+    queue = DummyQueue()
+    video_threads = DummyVideoThreadRepository()
+    video_threads.thread_record = DummyVideoThreadRecord()
+    bot = make_bot(queue=queue, video_thread_repository=video_threads)
+    channel = FakeQuestionChannel()
+    message = type(
+        "Message",
+        (),
+        {
+            "content": "What did they say about deployment?",
+            "id": 3333,
+            "channel": channel,
+            "author": type("User", (), {"id": 42})(),
+            "guild": type("Guild", (), {"id": "guild-1"})(),
+        },
+    )()
+
+    handled = run_async(bot._maybe_enqueue_thread_question(cast(discord.Message, message)))
+
+    assert handled is True
+    assert queue.calls == [
+        {
+            "video_id": "abc123xyz",
+            "question": "What did they say about deployment?",
+            "requested_by": "42",
+            "source": "discord_thread_question",
+            "reply_channel_id": 2002,
+            "reply_message_id": 3333,
+            "guild_id": "guild-1",
+        }
+    ]
+    assert channel.sent == [("Queued question #9", message, False)]
+
+
+def run_async(awaitable):
+    import asyncio
+
+    return asyncio.run(awaitable)
 
 
 def test_server_scoped_auth_helpers() -> None:

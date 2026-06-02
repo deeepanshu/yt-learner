@@ -1,7 +1,14 @@
 from collections.abc import Mapping
 from typing import cast
 
-from app.extractor import CUSTOM_PROMPT_SYSTEM_PROMPT, ExtractionInput, SYSTEM_PROMPT, build_messages
+from app.extractor import (
+    CHAT_SYSTEM_PROMPT,
+    CUSTOM_PROMPT_SYSTEM_PROMPT,
+    ExtractionInput,
+    SYSTEM_PROMPT,
+    build_messages,
+    build_question_messages,
+)
 from app.transcript import TranscriptData, TranscriptSegment
 
 
@@ -56,6 +63,21 @@ def test_build_messages_uses_custom_prompt_instead_of_default_structure() -> Non
     content = message_content(messages[1])
     assert "User request:\nfocus on deployment advice" in content
     assert "Additional user request:" not in content
+
+
+def test_build_question_messages_uses_chat_prompt() -> None:
+    messages = build_question_messages(
+        title="Video Title",
+        url="https://www.youtube.com/watch?v=abc123xyz",
+        transcript_text="first line\nsecond line",
+        question="What about deployment?",
+        max_transcript_chars=None,
+    )
+
+    assert messages[0] == {"role": "system", "content": CHAT_SYSTEM_PROMPT}
+    content = message_content(messages[1])
+    assert "Question:\nWhat about deployment?" in content
+    assert "Transcript:\nfirst line\nsecond line" in content
 
 
 def test_build_messages_truncates_transcript() -> None:

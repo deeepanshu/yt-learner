@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import logging
 import time
 from dataclasses import dataclass
@@ -13,13 +14,14 @@ from app.channel_watches import VideoThreadRepository, WatchRepository
 from app.config import Settings, load_settings
 from app.discord_bot import build_processor
 from app.extractor import ExtractionError
-from app.job_queue import Job, JobQueue
-from app.pipeline import ProcessedVideo, VideoProcessor
+from app.job_queue import TASK_ANSWER_VIDEO_QUESTION, TASK_SUMMARIZE_VIDEO, Job, JobQueue
+from app.pipeline import AnsweredVideoQuestion, ProcessedVideo, VideoProcessor
 from app.telemetry import NoopTelemetry, configure_logging, configure_telemetry
 from app.transcript import TranscriptFetchError, TranscriptUnavailableError, UnsupportedVideoError
 
 LOGGER = logging.getLogger(__name__)
 MAX_THREAD_TITLE_CHARS = 100
+MAX_DISCORD_INLINE_MESSAGE_CHARS = 1900
 
 
 def format_thread_title(title: str) -> str:
@@ -36,6 +38,14 @@ class ProcessorProtocol(Protocol):
         requested_by: str,
         extra_prompt: str | None = None,
     ) -> ProcessedVideo: ...
+
+    async def answer_video_question(
+        self,
+        *,
+        video_id: str,
+        question: str,
+        requested_by: str,
+    ) -> AnsweredVideoQuestion: ...
 
 
 class DiscordMessageTarget(Protocol):
@@ -116,13 +126,13 @@ class WorkerService:
 
         started = time.perf_counter()
         try:
-            result = await self.processor.process_video(
-                job.video_url,
-                requested_by=job.requested_by,
-                extra_prompt=job.extra_prompt,
-            )
+            if job.task_type == TASK_SUMMARIZE_VIDEO:
+                return await self._run_summarize_job(job, started)
+            if job.task_type == TASK_ANSWER_VIDEO_QUESTION:
+                return await self._run_question_job(job, started)
+            raise RuntimeError(f"Unsupported job task type: {job.task_type}")
         except Exception as exc:
-            failed_job = self.queue.mark_failed(job.id, error=self._error_text(exc))
+            failed_job = self.queue.mark_failed(job.id, error=self._error_text(exc, job=job))
             self.telemetry.record_job_processed(
                 source=job.source,
                 status="failed",
@@ -141,6 +151,12 @@ class WorkerService:
             )
             return failed_job
 
+    async def _run_summarize_job(self, job: Job, started: float) -> Job:
+        result = await self.processor.process_video(
+            job.video_url,
+            requested_by=job.requested_by,
+            extra_prompt=job.extra_prompt,
+        )
         done_job = self.queue.mark_done(
             job.id,
             learning_record_id=result.learning_record_id,
@@ -167,6 +183,35 @@ class WorkerService:
             time.perf_counter() - started,
         )
         await self._safe_notify_success(done_job, result)
+        return done_job
+
+    async def _run_question_job(self, job: Job, started: float) -> Job:
+        if job.video_id is None or job.question is None:
+            raise RuntimeError("Question job is missing video_id or question")
+        result = await self.processor.answer_video_question(
+            video_id=job.video_id,
+            question=job.question,
+            requested_by=job.requested_by,
+        )
+        done_job = self.queue.mark_done(
+            job.id,
+            learning_record_id=result.learning_record_id,
+            result_path="",
+        )
+        self.telemetry.record_job_processed(
+            source=job.source,
+            status="done",
+            duration_seconds=time.perf_counter() - started,
+            reused_existing=True,
+        )
+        LOGGER.info(
+            "worker_question_job_done job_id=%s source=%s video_id=%s duration_seconds=%.3f",
+            job.id,
+            job.source,
+            result.video_id,
+            time.perf_counter() - started,
+        )
+        await self._safe_notify_question_answer(done_job, result)
         return done_job
 
     async def run_forever(self, *, poll_interval_seconds: float = 2.0) -> None:
@@ -196,6 +241,31 @@ class WorkerService:
             mention_author=False,
         )
 
+    async def _notify_question_answer(self, job: Job, result: AnsweredVideoQuestion) -> None:
+        channel = await self._resolve_channel(job)
+        if channel is None:
+            LOGGER.info("worker_question_notification_skipped job_id=%s reason=no_channel", job.id)
+            return
+        reference = self._notification_reference(job, channel)
+        if len(result.markdown) <= MAX_DISCORD_INLINE_MESSAGE_CHARS:
+            await channel.send(
+                result.markdown,
+                reference=reference,
+                mention_author=False,
+            )
+            return
+
+        answer_file = discord.File(
+            io.BytesIO(result.markdown.encode("utf-8")),
+            filename=f"job-{job.id}-answer.md",
+        )
+        await channel.send(
+            content=f"Answer for job #{job.id} is attached.",
+            file=answer_file,
+            reference=reference,
+            mention_author=False,
+        )
+
     async def _notify_failure(self, job: Job) -> None:
         channel = await self._resolve_channel(job)
         if channel is None:
@@ -213,6 +283,12 @@ class WorkerService:
             await self._notify_success(job, result)
         except discord.DiscordException:
             LOGGER.exception("Unable to send success notification for job %s", job.id)
+
+    async def _safe_notify_question_answer(self, job: Job, result: AnsweredVideoQuestion) -> None:
+        try:
+            await self._notify_question_answer(job, result)
+        except discord.DiscordException:
+            LOGGER.exception("Unable to send question answer notification for job %s", job.id)
 
     async def _safe_notify_failure(self, job: Job) -> None:
         try:
@@ -283,7 +359,7 @@ class WorkerService:
             return None
         return channel.get_partial_message(job.reply_message_id)
 
-    def _error_text(self, exc: Exception) -> str:
+    def _error_text(self, exc: Exception, *, job: Job | None = None) -> str:
         if isinstance(exc, TranscriptUnavailableError):
             return "I could not fetch an English transcript for this video."
         if isinstance(exc, TranscriptFetchError):
@@ -291,6 +367,8 @@ class WorkerService:
         if isinstance(exc, UnsupportedVideoError):
             return "The video looks private, unavailable, or unsupported."
         if isinstance(exc, ExtractionError):
+            if job is not None and job.task_type == TASK_ANSWER_VIDEO_QUESTION:
+                return "I could not answer that question while calling OpenAI. Try again later."
             return "The extraction failed while calling OpenAI. The transcript was saved for debugging."
         return "The extraction failed while calling OpenAI. Try again later."
 

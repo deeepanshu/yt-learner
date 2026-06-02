@@ -173,6 +173,63 @@ class OutputStore:
             reused_existing=False,
         )
 
+    def save_transcript(
+        self,
+        *,
+        title: str,
+        video_id: str,
+        source_url: str,
+        transcript_text: str,
+        requested_by: str,
+        processed_at: datetime | None = None,
+    ) -> StoredDocument:
+        existing = self.find_existing_learning_record(
+            source_type="youtube_url",
+            source_key=video_id,
+            record_type="transcript",
+        )
+        if existing is not None:
+            return StoredDocument(
+                learning_record_id=existing.id,
+                path=existing.artifact_path,
+                title=existing.title,
+                reused_existing=True,
+            )
+
+        processed_timestamp = processed_at or datetime.now(timezone.utc)
+        timestamp = processed_timestamp.strftime("%Y-%m-%d")
+        output_path = self.root / f"{timestamp}__{slugify(title)}__{video_id}.transcript.txt"
+        output_path.write_text(transcript_text, encoding="utf-8")
+        learning_record_id = self._upsert_learning_record(
+            source_type="youtube_url",
+            source_key=video_id,
+            source_ref=source_url,
+            record_type="transcript",
+            title=title,
+            artifact_path=output_path,
+            requested_by=requested_by,
+            processed_at=processed_timestamp,
+        )
+        return StoredDocument(
+            learning_record_id=learning_record_id,
+            path=output_path,
+            title=title,
+            reused_existing=False,
+        )
+
+    def find_transcript_text(self, video_id: str) -> str | None:
+        record = self.find_existing_learning_record(
+            source_type="youtube_url",
+            source_key=video_id,
+            record_type="transcript",
+        )
+        if record is None:
+            return None
+        try:
+            return record.artifact_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+
     def save_transcript_debug(
         self,
         *,

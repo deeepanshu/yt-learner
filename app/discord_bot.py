@@ -7,7 +7,7 @@ import re
 import discord
 from discord import app_commands
 
-from app.channel_watches import WatchRepository
+from app.channel_watches import VideoThreadRepository, WatchRepository
 from app.config import Settings, load_settings
 from app.extractor import LearningExtractor
 from app.job_queue import Job, JobQueue
@@ -29,6 +29,7 @@ class LearnerBot(discord.Client):
         settings: Settings,
         queue: JobQueue,
         watch_repository: WatchRepository,
+        video_thread_repository: VideoThreadRepository,
         telemetry=None,
     ) -> None:
         intents = discord.Intents.default()
@@ -37,6 +38,7 @@ class LearnerBot(discord.Client):
         self.settings = settings
         self.queue = queue
         self.watch_repository = watch_repository
+        self.video_thread_repository = video_thread_repository
         self.telemetry = telemetry or NoopTelemetry()
         self.tree = app_commands.CommandTree(self)
 
@@ -317,6 +319,8 @@ class LearnerBot(discord.Client):
                 getattr(message.author, "id", None),
             )
             return
+        if await self._maybe_enqueue_thread_question(message):
+            return
         matched_url = extract_youtube_url(message.content)
         if matched_url is None:
             LOGGER.info(
@@ -364,6 +368,28 @@ class LearnerBot(discord.Client):
         )
         await message.channel.send(self._queued_text(job.id, parsed.canonical_url))
 
+    async def _maybe_enqueue_thread_question(self, message: discord.Message) -> bool:
+        question = " ".join(message.content.split())
+        if not question:
+            return False
+        channel_id = getattr(message.channel, "id", None)
+        if channel_id is None:
+            return False
+        thread_record = self.video_thread_repository.find_thread_by_thread_id(int(channel_id))
+        if thread_record is None:
+            return False
+        job = self.queue.enqueue_answer_video_question(
+            video_id=thread_record.video_id,
+            question=question,
+            requested_by=str(message.author.id),
+            source="discord_thread_question",
+            reply_channel_id=int(channel_id),
+            reply_message_id=message.id,
+            guild_id=str(getattr(message.guild, "id", thread_record.guild_id)),
+        )
+        await message.channel.send(f"Queued question #{job.id}", reference=message, mention_author=False)
+        return True
+
     def _is_allowed_interaction(self, interaction: discord.Interaction) -> bool:
         return interaction.guild_id is not None
 
@@ -376,8 +402,9 @@ class LearnerBot(discord.Client):
 
     def _is_allowed_location(self, channel: object) -> bool:
         channel_id = getattr(channel, "id", None)
+        parent_id = getattr(channel, "parent_id", None)
         if self.settings.allowed_channel_id:
-            return str(channel_id) == self.settings.allowed_channel_id
+            return str(channel_id) == self.settings.allowed_channel_id or str(parent_id) == self.settings.allowed_channel_id
         return True
 
     def _remove_subscription(self, *, guild_id: str, raw_reference: str):
@@ -451,7 +478,14 @@ def build_processor(settings: Settings) -> VideoProcessor:
 def build_bot(settings: Settings, telemetry=None) -> LearnerBot:
     queue = JobQueue(settings.db_path)
     watch_repository = WatchRepository(settings.db_path)
-    return LearnerBot(settings=settings, queue=queue, watch_repository=watch_repository, telemetry=telemetry)
+    video_thread_repository = VideoThreadRepository(settings.db_path)
+    return LearnerBot(
+        settings=settings,
+        queue=queue,
+        watch_repository=watch_repository,
+        video_thread_repository=video_thread_repository,
+        telemetry=telemetry,
+    )
 
 
 def extract_youtube_url(message_content: str) -> str | None:

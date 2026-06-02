@@ -14,6 +14,7 @@ STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
 
 TASK_SUMMARIZE_VIDEO = "summarize_video"
+TASK_ANSWER_VIDEO_QUESTION = "answer_video_question"
 
 
 def utc_now() -> datetime:
@@ -51,7 +52,22 @@ class Job:
 
     @property
     def video_url(self) -> str:
-        return str(self.input_data["video_url"])
+        return str(self.input_data.get("video_url", ""))
+
+    @property
+    def video_id(self) -> str | None:
+        raw = self.input_data.get("video_id")
+        if raw is None:
+            return None
+        return str(raw)
+
+    @property
+    def question(self) -> str | None:
+        raw = self.input_data.get("question")
+        if not isinstance(raw, str):
+            return None
+        cleaned = raw.strip()
+        return cleaned or None
 
     @property
     def reply_channel_id(self) -> int | None:
@@ -101,7 +117,6 @@ class JobQueue:
         extra_prompt: str | None = None,
         priority: int = 0,
     ) -> Job:
-        created_at = utc_now()
         input_data = {
             "video_url": video_url,
             "reply_channel_id": reply_channel_id,
@@ -110,6 +125,50 @@ class JobQueue:
         }
         if extra_prompt is not None:
             input_data["extra_prompt"] = extra_prompt
+        return self._enqueue_job(
+            task_type=TASK_SUMMARIZE_VIDEO,
+            requested_by=requested_by,
+            source=source,
+            input_data=input_data,
+            priority=priority,
+        )
+
+    def enqueue_answer_video_question(
+        self,
+        *,
+        video_id: str,
+        question: str,
+        requested_by: str,
+        source: str,
+        reply_channel_id: int | None,
+        reply_message_id: int | None,
+        guild_id: str | None,
+        priority: int = 0,
+    ) -> Job:
+        return self._enqueue_job(
+            task_type=TASK_ANSWER_VIDEO_QUESTION,
+            requested_by=requested_by,
+            source=source,
+            input_data={
+                "video_id": video_id,
+                "question": question,
+                "reply_channel_id": reply_channel_id,
+                "reply_message_id": reply_message_id,
+                "guild_id": guild_id,
+            },
+            priority=priority,
+        )
+
+    def _enqueue_job(
+        self,
+        *,
+        task_type: str,
+        requested_by: str,
+        source: str,
+        input_data: dict[str, Any],
+        priority: int,
+    ) -> Job:
+        created_at = utc_now()
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -125,7 +184,7 @@ class JobQueue:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    TASK_SUMMARIZE_VIDEO,
+                    task_type,
                     source,
                     requested_by,
                     json.dumps(input_data),
@@ -181,7 +240,7 @@ class JobQueue:
             conn.commit()
         return self.get_job(int(row["id"]))
 
-    def mark_done(self, job_id: int, *, learning_record_id: int, result_path: str) -> Job:
+    def mark_done(self, job_id: int, *, learning_record_id: int | None, result_path: str) -> Job:
         finished_at = utc_now()
         with self._connect() as conn:
             conn.execute(

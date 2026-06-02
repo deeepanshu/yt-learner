@@ -21,6 +21,7 @@ def test_save_and_find_video_thread(tmp_path) -> None:
     assert found is not None
     assert found.thread_id == 2002
     assert found.title == "Video Title"
+    assert repository.find_thread_by_thread_id(2002) == saved
 
 
 def test_save_thread_updates_existing_mapping(tmp_path) -> None:

@@ -21,6 +21,24 @@ def _prompt_hash(extra_prompt: str | None) -> str | None:
 class ExtractorProtocol(Protocol):
     async def render_markdown(self, payload: ExtractionInput) -> str: ...
 
+    async def answer_question(
+        self,
+        *,
+        title: str,
+        url: str,
+        transcript_text: str,
+        question: str,
+    ) -> str: ...
+
+
+@dataclass(frozen=True)
+class AnsweredVideoQuestion:
+    learning_record_id: int | None
+    video_id: str
+    title: str
+    url: str
+    markdown: str
+
 
 @dataclass(frozen=True)
 class ProcessedVideo:
@@ -43,6 +61,49 @@ class VideoProcessor:
         self.store = store
         self.extractor = extractor
         self.metadata_fetcher = metadata_fetcher
+
+    async def answer_video_question(self, *, video_id: str, question: str, requested_by: str) -> AnsweredVideoQuestion:
+        existing = self.store.find_existing_learning_record(
+            source_type="youtube_url",
+            source_key=video_id,
+            record_type="notes",
+        )
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        if existing is not None:
+            title = existing.title
+            url = existing.source_ref
+        else:
+            try:
+                metadata = self.metadata_fetcher(url)
+                title = metadata.title
+            except VideoMetadataError:
+                title = f"youtube-video-{video_id}"
+
+        transcript_text = self.store.find_transcript_text(video_id)
+        if transcript_text is None:
+            transcript = fetch_transcript(video_id)
+            transcript_text = transcript.text
+            self.store.save_transcript(
+                title=title,
+                video_id=video_id,
+                source_url=url,
+                transcript_text=transcript_text,
+                requested_by=requested_by,
+            )
+
+        markdown = await self.extractor.answer_question(
+            title=title,
+            url=url,
+            transcript_text=transcript_text,
+            question=question,
+        )
+        return AnsweredVideoQuestion(
+            learning_record_id=existing.id if existing is not None else None,
+            video_id=video_id,
+            title=title,
+            url=url,
+            markdown=markdown,
+        )
 
     async def process_video(
         self,
@@ -76,6 +137,13 @@ class VideoProcessor:
             title = f"youtube-video-{parsed.video_id}"
 
         transcript = fetch_transcript(parsed.video_id)
+        self.store.save_transcript(
+            title=title,
+            video_id=parsed.video_id,
+            source_url=parsed.canonical_url,
+            transcript_text=transcript.text,
+            requested_by=requested_by,
+        )
         try:
             markdown = await self.extractor.render_markdown(
                 ExtractionInput(

@@ -86,6 +86,19 @@ class VideoThreadRepository:
             return None
         return self._row_to_video_thread(row)
 
+    def find_thread_by_thread_id(self, thread_id: int) -> VideoThread | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM video_threads
+                WHERE thread_id = ?
+                """,
+                (thread_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_video_thread(row)
+
     def save_thread(
         self,
         *,

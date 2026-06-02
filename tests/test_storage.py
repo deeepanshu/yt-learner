@@ -55,3 +55,21 @@ def test_save_and_reuse_existing(tmp_path) -> None:
         str(first.path),
         "user-1",
     )
+
+
+def test_save_and_find_transcript_text(tmp_path) -> None:
+    store = OutputStore(tmp_path / "outputs", tmp_path / "data" / "yt_learner.sqlite3")
+    processed_at = datetime(2026, 5, 17, tzinfo=timezone.utc)
+
+    saved = store.save_transcript(
+        title="Demo Video",
+        video_id="abc123",
+        source_url="https://www.youtube.com/watch?v=abc123",
+        transcript_text="line one\nline two",
+        requested_by="user-1",
+        processed_at=processed_at,
+    )
+
+    assert saved.reused_existing is False
+    assert saved.path.name == "2026-05-17__demo-video__abc123.transcript.txt"
+    assert store.find_transcript_text("abc123") == "line one\nline two"

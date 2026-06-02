@@ -71,6 +71,26 @@ def test_enqueue_job_stores_extra_prompt(tmp_path) -> None:
     assert queue.get_job(queued.id).extra_prompt == "focus on deployment advice"
 
 
+def test_enqueue_answer_video_question(tmp_path) -> None:
+    queue = JobQueue(tmp_path / "jobs.sqlite3")
+
+    queued = queue.enqueue_answer_video_question(
+        video_id="abc123xyz",
+        question="What about deployment?",
+        requested_by="user-1",
+        source="discord_thread_question",
+        reply_channel_id=2002,
+        reply_message_id=3333,
+        guild_id="guild-1",
+    )
+
+    assert queued.video_id == "abc123xyz"
+    assert queued.question == "What about deployment?"
+    assert queued.reply_channel_id == 2002
+    assert queued.reply_message_id == 3333
+    assert queued.guild_id == "guild-1"
+
+
 def test_update_reply_message_id(tmp_path) -> None:
     queue = JobQueue(tmp_path / "jobs.sqlite3")
 

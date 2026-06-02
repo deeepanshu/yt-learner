@@ -7,7 +7,7 @@ import re
 import discord
 from discord import app_commands
 
-from app.channel_watches import LearningThreadRepository, WatchRepository
+from app.channel_watches import DiscordThreadRepository, WatchRepository
 from app.config import Settings, load_settings
 from app.extractor import LearningExtractor
 from app.job_queue import Job, JobQueue
@@ -29,7 +29,7 @@ class LearnerBot(discord.Client):
         settings: Settings,
         queue: JobQueue,
         watch_repository: WatchRepository,
-        learning_thread_repository: LearningThreadRepository,
+        discord_thread_repository: DiscordThreadRepository,
         telemetry=None,
     ) -> None:
         intents = discord.Intents.default()
@@ -38,7 +38,7 @@ class LearnerBot(discord.Client):
         self.settings = settings
         self.queue = queue
         self.watch_repository = watch_repository
-        self.learning_thread_repository = learning_thread_repository
+        self.discord_thread_repository = discord_thread_repository
         self.telemetry = telemetry or NoopTelemetry()
         self.tree = app_commands.CommandTree(self)
 
@@ -375,7 +375,7 @@ class LearnerBot(discord.Client):
         channel_id = getattr(message.channel, "id", None)
         if channel_id is None:
             return False
-        thread_record = self.learning_thread_repository.find_thread_by_thread_id(int(channel_id))
+        thread_record = self.discord_thread_repository.find_thread_by_thread_id(int(channel_id))
         if thread_record is None:
             return False
         job = self.queue.enqueue_answer_video_question(
@@ -478,12 +478,12 @@ def build_processor(settings: Settings) -> VideoProcessor:
 def build_bot(settings: Settings, telemetry=None) -> LearnerBot:
     queue = JobQueue(settings.db_path)
     watch_repository = WatchRepository(settings.db_path)
-    learning_thread_repository = LearningThreadRepository(settings.db_path)
+    discord_thread_repository = DiscordThreadRepository(settings.db_path)
     return LearnerBot(
         settings=settings,
         queue=queue,
         watch_repository=watch_repository,
-        learning_thread_repository=learning_thread_repository,
+        discord_thread_repository=discord_thread_repository,
         telemetry=telemetry,
     )
 

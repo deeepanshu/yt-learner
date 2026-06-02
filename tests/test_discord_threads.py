@@ -1,8 +1,8 @@
-from app.channel_watches import LearningThreadRepository
+from app.channel_watches import DiscordThreadRepository
 
 
-def test_save_and_find_learning_thread(tmp_path) -> None:
-    repository = LearningThreadRepository(tmp_path / "data" / "yt_learner.sqlite3")
+def test_save_and_find_discord_thread(tmp_path) -> None:
+    repository = DiscordThreadRepository(tmp_path / "data" / "yt_learner.sqlite3")
 
     saved = repository.save_thread(
         guild_id="guild-1",
@@ -19,13 +19,16 @@ def test_save_and_find_learning_thread(tmp_path) -> None:
 
     assert found == saved
     assert found is not None
+    assert found.purpose == "learning"
+    assert found.source_type == "youtube_url"
+    assert found.source_key == "abc123xyz"
     assert found.thread_id == 2002
     assert found.title == "Video Title"
     assert repository.find_thread_by_thread_id(2002) == saved
 
 
 def test_save_thread_updates_existing_mapping(tmp_path) -> None:
-    repository = LearningThreadRepository(tmp_path / "data" / "yt_learner.sqlite3")
+    repository = DiscordThreadRepository(tmp_path / "data" / "yt_learner.sqlite3")
 
     first = repository.save_thread(
         guild_id="guild-1",

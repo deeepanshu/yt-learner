@@ -32,10 +32,11 @@ class WatchedVideo:
 
 
 @dataclass(frozen=True)
-class LearningThread:
+class DiscordThread:
     id: int
     guild_id: str
     parent_channel_id: int
+    purpose: str
     source_type: str
     source_key: str
     thread_id: int

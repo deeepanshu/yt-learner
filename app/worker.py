@@ -10,7 +10,7 @@ from typing import Protocol, cast, runtime_checkable
 
 import discord
 
-from app.channel_watches import LearningThreadRepository, WatchRepository
+from app.channel_watches import DiscordThreadRepository, WatchRepository
 from app.config import Settings, load_settings
 from app.discord_bot import build_processor
 from app.extractor import ExtractionError
@@ -99,7 +99,7 @@ class WorkerService:
         processor: ProcessorProtocol,
         discord_client: DiscordClientProtocol,
         watch_repository: WatchRepository | None = None,
-        learning_thread_repository: LearningThreadRepository | None = None,
+        discord_thread_repository: DiscordThreadRepository | None = None,
         telemetry=None,
     ) -> None:
         self.settings = settings
@@ -107,7 +107,7 @@ class WorkerService:
         self.processor = processor
         self.discord_client = discord_client
         self.watch_repository = watch_repository
-        self.learning_thread_repository = learning_thread_repository or LearningThreadRepository(settings.db_path)
+        self.discord_thread_repository = discord_thread_repository or DiscordThreadRepository(settings.db_path)
         self.telemetry = telemetry or NoopTelemetry()
 
     async def run_next_job(self) -> Job | None:
@@ -303,7 +303,7 @@ class WorkerService:
                 return None
             return NotificationTarget(channel=channel, use_reply_reference=True)
 
-        existing = self.learning_thread_repository.find_thread(
+        existing = self.discord_thread_repository.find_thread(
             guild_id=job.guild_id,
             parent_channel_id=job.reply_channel_id,
             video_id=result.video_id,
@@ -313,7 +313,7 @@ class WorkerService:
                 thread = await self.discord_client.fetch_channel(existing.thread_id)
                 return NotificationTarget(channel=cast(DiscordMessageTarget, thread), use_reply_reference=False)
             except discord.DiscordException:
-                LOGGER.exception("Unable to fetch existing learning thread for job %s", job.id)
+                LOGGER.exception("Unable to fetch existing Discord thread for job %s", job.id)
 
         parent = await self._resolve_channel(job)
         if parent is None:
@@ -325,13 +325,13 @@ class WorkerService:
         try:
             thread = await parent.create_thread(name=thread_name, type=discord.ChannelType.public_thread)
         except discord.DiscordException:
-            LOGGER.exception("Unable to create learning thread for job %s", job.id)
+            LOGGER.exception("Unable to create Discord thread for job %s", job.id)
             return NotificationTarget(channel=parent, use_reply_reference=True)
         thread_id = getattr(thread, "id", None)
         if thread_id is None:
-            LOGGER.info("worker_learning_thread_untracked job_id=%s reason=missing_thread_id", job.id)
+            LOGGER.info("worker_discord_thread_untracked job_id=%s reason=missing_thread_id", job.id)
             return NotificationTarget(channel=cast(DiscordMessageTarget, thread), use_reply_reference=False)
-        self.learning_thread_repository.save_thread(
+        self.discord_thread_repository.save_thread(
             guild_id=job.guild_id,
             parent_channel_id=job.reply_channel_id,
             video_id=result.video_id,

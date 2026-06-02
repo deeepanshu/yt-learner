@@ -3,7 +3,7 @@ from typing import cast
 
 import discord
 
-from app.channel_watches import LearningThreadRepository, WatchRepository
+from app.channel_watches import DiscordThreadRepository, WatchRepository
 from app.config import Settings
 from app.discord_bot import LearnerBot, extract_youtube_url, normalize_extra_prompt
 from app.job_queue import JobQueue
@@ -23,15 +23,15 @@ def make_bot(
     *,
     queue: "DummyQueue | None" = None,
     watch_repository: "DummyWatchRepository | None" = None,
-    learning_thread_repository: "DummyLearningThreadRepository | None" = None,
+    discord_thread_repository: "DummyDiscordThreadRepository | None" = None,
 ) -> LearnerBot:
     return LearnerBot(
         settings=dummy_settings(),
         queue=cast(JobQueue, queue or DummyQueue()),
         watch_repository=cast(WatchRepository, watch_repository or DummyWatchRepository()),
-        learning_thread_repository=cast(
-            LearningThreadRepository,
-            learning_thread_repository or DummyLearningThreadRepository(),
+        discord_thread_repository=cast(
+            DiscordThreadRepository,
+            discord_thread_repository or DummyDiscordThreadRepository(),
         ),
     )
 
@@ -54,12 +54,12 @@ class DummyQueue:
         return type("Job", (), {"id": 9})()
 
 
-class DummyLearningThreadRecord:
+class DummyDiscordThreadRecord:
     video_id = "abc123xyz"
     guild_id = "guild-1"
 
 
-class DummyLearningThreadRepository:
+class DummyDiscordThreadRepository:
     def __init__(self) -> None:
         self.thread_record: object | None = None
 
@@ -159,9 +159,9 @@ def test_normalize_extra_prompt_handles_empty_values() -> None:
 
 def test_thread_question_is_enqueued() -> None:
     queue = DummyQueue()
-    learning_threads = DummyLearningThreadRepository()
-    learning_threads.thread_record = DummyLearningThreadRecord()
-    bot = make_bot(queue=queue, learning_thread_repository=learning_threads)
+    discord_threads = DummyDiscordThreadRepository()
+    discord_threads.thread_record = DummyDiscordThreadRecord()
+    bot = make_bot(queue=queue, discord_thread_repository=discord_threads)
     channel = FakeQuestionChannel()
     message = type(
         "Message",

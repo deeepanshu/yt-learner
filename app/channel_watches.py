@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from app import LearningThread, WatchedChannel, WatchedVideo
+from app import DiscordThread, WatchedChannel, WatchedVideo
 
 
 def utc_now() -> datetime:
@@ -23,7 +23,10 @@ def _parse_timestamp(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
-class LearningThreadRepository:
+DISCORD_THREAD_PURPOSE_LEARNING = "learning"
+
+
+class DiscordThreadRepository:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -35,31 +38,35 @@ class LearningThreadRepository:
         guild_id: str,
         parent_channel_id: int,
         video_id: str,
-    ) -> LearningThread | None:
+    ) -> DiscordThread | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT * FROM learning_threads
-                WHERE guild_id = ? AND parent_channel_id = ? AND source_type = 'youtube_url' AND source_key = ?
+                SELECT * FROM discord_threads
+                WHERE guild_id = ?
+                  AND parent_channel_id = ?
+                  AND purpose = ?
+                  AND source_type = 'youtube_url'
+                  AND source_key = ?
                 """,
-                (guild_id, parent_channel_id, video_id),
+                (guild_id, parent_channel_id, DISCORD_THREAD_PURPOSE_LEARNING, video_id),
             ).fetchone()
         if row is None:
             return None
-        return self._row_to_learning_thread(row)
+        return self._row_to_discord_thread(row)
 
-    def find_thread_by_thread_id(self, thread_id: int) -> LearningThread | None:
+    def find_thread_by_thread_id(self, thread_id: int) -> DiscordThread | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT * FROM learning_threads
+                SELECT * FROM discord_threads
                 WHERE thread_id = ?
                 """,
                 (thread_id,),
             ).fetchone()
         if row is None:
             return None
-        return self._row_to_learning_thread(row)
+        return self._row_to_discord_thread(row)
 
     def save_thread(
         self,
@@ -69,15 +76,16 @@ class LearningThreadRepository:
         video_id: str,
         thread_id: int,
         title: str,
-    ) -> LearningThread:
+    ) -> DiscordThread:
         timestamp = utc_now()
         serialized_timestamp = _serialize_timestamp(timestamp) or timestamp.isoformat()
         with self._connect() as conn:
             row = conn.execute(
                 """
-                INSERT INTO learning_threads (
+                INSERT INTO discord_threads (
                     guild_id,
                     parent_channel_id,
+                    purpose,
                     source_type,
                     source_key,
                     thread_id,
@@ -85,8 +93,8 @@ class LearningThreadRepository:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(guild_id, parent_channel_id, source_type, source_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, parent_channel_id, purpose, source_type, source_key)
                 DO UPDATE SET
                     thread_id = excluded.thread_id,
                     title = excluded.title,
@@ -96,6 +104,7 @@ class LearningThreadRepository:
                 (
                     guild_id,
                     parent_channel_id,
+                    DISCORD_THREAD_PURPOSE_LEARNING,
                     "youtube_url",
                     video_id,
                     thread_id,
@@ -105,8 +114,8 @@ class LearningThreadRepository:
                 ),
             ).fetchone()
         if row is None:
-            raise RuntimeError("Unable to save learning thread")
-        return self._row_to_learning_thread(row)
+            raise RuntimeError("Unable to save Discord thread")
+        return self._row_to_discord_thread(row)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -117,32 +126,72 @@ class LearningThreadRepository:
         with self._connect() as conn:
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS learning_threads (
+                CREATE TABLE IF NOT EXISTS discord_threads (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     guild_id TEXT NOT NULL,
                     parent_channel_id INTEGER NOT NULL,
+                    purpose TEXT NOT NULL,
                     source_type TEXT NOT NULL,
                     source_key TEXT NOT NULL,
                     thread_id INTEGER NOT NULL,
                     title TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    UNIQUE(guild_id, parent_channel_id, source_type, source_key)
+                    UNIQUE(guild_id, parent_channel_id, purpose, source_type, source_key)
                 )
                 """
             )
+            self._import_legacy_learning_threads(conn)
             conn.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_learning_threads_thread_id
-                ON learning_threads(thread_id)
+                CREATE INDEX IF NOT EXISTS idx_discord_threads_thread_id
+                ON discord_threads(thread_id)
                 """
             )
 
-    def _row_to_learning_thread(self, row: sqlite3.Row) -> LearningThread:
-        return LearningThread(
+    def _import_legacy_learning_threads(self, conn: sqlite3.Connection) -> None:
+        legacy_exists = conn.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'learning_threads'
+            """
+        ).fetchone()
+        if legacy_exists is None:
+            return
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO discord_threads (
+                guild_id,
+                parent_channel_id,
+                purpose,
+                source_type,
+                source_key,
+                thread_id,
+                title,
+                created_at,
+                updated_at
+            )
+            SELECT
+                guild_id,
+                parent_channel_id,
+                ?,
+                source_type,
+                source_key,
+                thread_id,
+                title,
+                created_at,
+                updated_at
+            FROM learning_threads
+            """,
+            (DISCORD_THREAD_PURPOSE_LEARNING,),
+        )
+
+    def _row_to_discord_thread(self, row: sqlite3.Row) -> DiscordThread:
+        return DiscordThread(
             id=int(row["id"]),
             guild_id=str(row["guild_id"]),
             parent_channel_id=int(row["parent_channel_id"]),
+            purpose=str(row["purpose"]),
             source_type=str(row["source_type"]),
             source_key=str(row["source_key"]),
             thread_id=int(row["thread_id"]),

@@ -10,10 +10,13 @@ from jwt import PyJWKClient
 from jwt.exceptions import PyJWKClientError, PyJWTError
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
+_ALLOWED_ALGORITHMS = ["ES256", "RS256", "EdDSA"]
+
 
 @dataclass(frozen=True)
-class CloudflareAccessSettings:
+class SupabaseMcpSettings:
     public_url: str
+    supabase_url: str
     issuer_url: str
     jwks_url: str
     audience: str
@@ -22,16 +25,18 @@ class CloudflareAccessSettings:
     required_scopes: list[str]
 
     @classmethod
-    def from_environment(cls) -> CloudflareAccessSettings:
+    def from_environment(cls) -> SupabaseMcpSettings:
         public_url = _required("MCP_PUBLIC_URL").rstrip("/")
-        issuer_url = _required("MCP_ACCESS_ISSUER_URL").rstrip("/")
-        jwks_url = _required("MCP_ACCESS_JWKS_URL")
-        audience = _required("MCP_ACCESS_AUDIENCE")
+        supabase_url = _required("SUPABASE_URL").rstrip("/")
+        issuer_url = f"{supabase_url}/auth/v1"
+        jwks_url = f"{issuer_url}/.well-known/jwks.json"
+        audience = os.getenv("MCP_JWT_AUDIENCE", "authenticated").strip()
         path = _path(os.getenv("MCP_PATH", "/mcp"))
-        port = _port(os.getenv("MCP_PORT", "3002"))
-        required_scopes = _scopes(os.getenv("MCP_ACCESS_REQUIRED_SCOPES", ""))
+        port = _port(os.getenv("MCP_PORT", "3003"))
+        required_scopes = _scopes(os.getenv("MCP_REQUIRED_SCOPES", ""))
         return cls(
             public_url=public_url,
+            supabase_url=supabase_url,
             issuer_url=issuer_url,
             jwks_url=jwks_url,
             audience=audience,
@@ -41,8 +46,8 @@ class CloudflareAccessSettings:
         )
 
 
-class CloudflareAccessTokenVerifier(TokenVerifier):
-    def __init__(self, settings: CloudflareAccessSettings, *, jwk_client: PyJWKClient | None = None) -> None:
+class SupabaseTokenVerifier(TokenVerifier):
+    def __init__(self, settings: SupabaseMcpSettings, *, jwk_client: PyJWKClient | None = None) -> None:
         self.settings = settings
         self.jwk_client = jwk_client or PyJWKClient(settings.jwks_url)
 
@@ -52,7 +57,7 @@ class CloudflareAccessTokenVerifier(TokenVerifier):
         except (PyJWKClientError, PyJWTError, ValueError):
             return None
 
-        client_id = str(claims.get("azp") or claims.get("client_id") or self.settings.audience)
+        client_id = str(claims.get("client_id") or claims.get("azp") or self.settings.audience)
         subject = claims.get("sub")
         expires_at = claims.get("exp")
         return AccessToken(
@@ -66,15 +71,15 @@ class CloudflareAccessTokenVerifier(TokenVerifier):
 
     def _decode(self, token: str) -> dict[str, Any]:
         signing_key = self.jwk_client.get_signing_key_from_jwt(token)
-        claims = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience=self.settings.audience,
-            issuer=self.settings.issuer_url,
-        )
+        options: dict[str, Any] = {}
+        kwargs: dict[str, Any] = {"algorithms": _ALLOWED_ALGORITHMS, "issuer": self.settings.issuer_url}
+        if self.settings.audience:
+            kwargs["audience"] = self.settings.audience
+        else:
+            options["verify_aud"] = False
+        claims = jwt.decode(token, signing_key.key, options=options, **kwargs)
         if not isinstance(claims, dict):
-            raise ValueError("Cloudflare Access token payload must be an object")
+            raise ValueError("Supabase token payload must be an object")
         return claims
 
 
@@ -93,6 +98,7 @@ def _port(raw: str) -> int:
     if not 1 <= port <= 65535:
         raise RuntimeError("Environment variable MCP_PORT must be between 1 and 65535")
     return port
+
 
 def _path(raw: str) -> str:
     path = raw.strip().rstrip("/")

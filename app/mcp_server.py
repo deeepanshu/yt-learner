@@ -11,7 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
 
-from app.mcp_auth import CloudflareAccessSettings, CloudflareAccessTokenVerifier
+from app.mcp_auth import SupabaseMcpSettings, SupabaseTokenVerifier
 from app.transcript import TranscriptData, TranscriptError, TranscriptSegment, fetch_transcript
 from app.youtube_urls import InvalidYouTubeUrl, parse_youtube_url_or_id
 
@@ -70,7 +70,7 @@ def create_mcp_server(
     return server
 
 
-def create_http_mcp(settings: CloudflareAccessSettings) -> MCPServer:
+def create_http_mcp(settings: SupabaseMcpSettings) -> MCPServer:
     auth_settings = AuthSettings(
         issuer_url=AnyHttpUrl(settings.issuer_url),
         resource_server_url=AnyHttpUrl(settings.public_url),
@@ -78,7 +78,7 @@ def create_http_mcp(settings: CloudflareAccessSettings) -> MCPServer:
     )
     return create_mcp_server(
         auth_settings=auth_settings,
-        token_verifier=CloudflareAccessTokenVerifier(settings),
+        token_verifier=SupabaseTokenVerifier(settings),
     )
 
 
@@ -90,7 +90,7 @@ def main() -> None:
 
 
 def http_main() -> None:
-    settings = CloudflareAccessSettings.from_environment()
+    settings = SupabaseMcpSettings.from_environment()
     create_http_mcp(settings).run(transport="streamable-http", host="0.0.0.0", port=settings.port, streamable_http_path=settings.path)
 
 

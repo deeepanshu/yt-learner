@@ -68,13 +68,13 @@ Run the local transcript MCP server:
 make run-mcp
 ```
 
-Run the Access-protected HTTP MCP service after setting the `MCP_*` environment values:
+Run the Supabase OAuth-protected HTTP MCP service after setting the `MCP_*` environment values and `SUPABASE_URL`:
 
 ```bash
 make run-mcp-http
 ```
 
-The deployed `mcp` Compose service is a Streamable HTTP resource server protected by Cloudflare Access. Keep its port loopback-bound, and route only through Cloudflare Tunnel.
+The deployed `mcp` Compose service is a Streamable HTTP resource server that validates Supabase OAuth 2.1 bearer tokens (same project as family-os). Keep its port loopback-bound, route only through Cloudflare Tunnel, and never gate the public hostname behind Cloudflare Access — ChatGPT needs unauthenticated reachability for OAuth discovery.
 
 Apply migrations:
 
@@ -124,7 +124,7 @@ Common optional values:
 ## Working Rules for Agents
 
 - Keep edits targeted and consistent with the current two-process architecture plus scheduler.
-- Keep the Cloudflare Access MCP path as the only remote ingress: validate bearer JWT signature, issuer, audience, and expiry in the MCP server; never expose an unauthenticated transcript proxy.
+- Keep the Cloudflare Tunnel as the only remote ingress: validate bearer JWT signature, Supabase issuer, audience, and expiry in the MCP server; never expose an unauthenticated transcript proxy.
 - Prefer extending existing modules over introducing duplicate abstractions.
 - Treat the bot, queue, worker, and pipeline boundaries as intentional unless the task explicitly changes them.
 - Postgres is the only application database. Do not reintroduce SQLite.

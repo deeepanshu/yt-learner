@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from app.mcp_auth import CloudflareAccessSettings, CloudflareAccessTokenVerifier
+from app.mcp_auth import SupabaseMcpSettings, SupabaseTokenVerifier
 
 
 class StubJwkClient:
@@ -10,76 +10,69 @@ class StubJwkClient:
         return type("SigningKey", (), {"key": "unused"})()
 
 
-def test_cloudflare_access_settings_loads_environment(monkeypatch) -> None:
-    monkeypatch.setenv("MCP_PUBLIC_URL", "https://mcp.example.com/mcp/")
-    monkeypatch.setenv("MCP_ACCESS_ISSUER_URL", "https://team.cloudflareaccess.com/")
-    monkeypatch.setenv("MCP_ACCESS_JWKS_URL", "https://team.cloudflareaccess.com/certs")
-    monkeypatch.setenv("MCP_ACCESS_AUDIENCE", "access-audience")
-    monkeypatch.setenv("MCP_PORT", "3002")
-    monkeypatch.setenv("MCP_ACCESS_REQUIRED_SCOPES", "openid profile")
-
-    settings = CloudflareAccessSettings.from_environment()
-
-    assert settings.public_url == "https://mcp.example.com/mcp"
-    assert settings.issuer_url == "https://team.cloudflareaccess.com"
-    assert settings.jwks_url == "https://team.cloudflareaccess.com/certs"
-    assert settings.audience == "access-audience"
-    assert settings.port == 3002
-    assert settings.required_scopes == ["openid", "profile"]
+def _settings() -> SupabaseMcpSettings:
+    return SupabaseMcpSettings(
+        public_url="https://ytlearner.example.com/yt/api/mcp",
+        supabase_url="https://project.supabase.co",
+        issuer_url="https://project.supabase.co/auth/v1",
+        jwks_url="https://project.supabase.co/auth/v1/.well-known/jwks.json",
+        audience="authenticated",
+        path="/yt/api/mcp",
+        port=3003,
+        required_scopes=[],
+    )
 
 
-def test_cloudflare_access_settings_rejects_missing_public_url(monkeypatch) -> None:
-    monkeypatch.delenv("MCP_PUBLIC_URL", raising=False)
+def test_supabase_settings_loads_environment(monkeypatch) -> None:
+    monkeypatch.setenv("MCP_PUBLIC_URL", "https://ytlearner.example.com/yt/api/mcp/")
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co/")
+    monkeypatch.setenv("MCP_PATH", "/yt/api/mcp")
+    monkeypatch.setenv("MCP_PORT", "3003")
+
+    settings = SupabaseMcpSettings.from_environment()
+
+    assert settings.public_url == "https://ytlearner.example.com/yt/api/mcp"
+    assert settings.issuer_url == "https://project.supabase.co/auth/v1"
+    assert settings.jwks_url == "https://project.supabase.co/auth/v1/.well-known/jwks.json"
+    assert settings.audience == "authenticated"
+    assert settings.port == 3003
+
+
+def test_supabase_settings_rejects_missing_supabase_url(monkeypatch) -> None:
+    monkeypatch.setenv("MCP_PUBLIC_URL", "https://ytlearner.example.com/yt/api/mcp")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
 
     try:
-        CloudflareAccessSettings.from_environment()
+        SupabaseMcpSettings.from_environment()
     except RuntimeError as exc:
-        assert str(exc) == "Missing required environment variable: MCP_PUBLIC_URL"
+        assert str(exc) == "Missing required environment variable: SUPABASE_URL"
         return
     raise AssertionError("Expected RuntimeError")
 
 
-def test_cloudflare_access_verifier_returns_claims(monkeypatch) -> None:
-    settings = CloudflareAccessSettings(
-        public_url="https://mcp.example.com/mcp",
-        issuer_url="https://team.cloudflareaccess.com",
-        jwks_url="https://team.cloudflareaccess.com/certs",
-        audience="access-audience",
-        path="/mcp",
-        port=3002,
-        required_scopes=[],
-    )
-    verifier = CloudflareAccessTokenVerifier(settings, jwk_client=StubJwkClient())
+def test_supabase_verifier_returns_oauth_client_claims(monkeypatch) -> None:
+    verifier = SupabaseTokenVerifier(_settings(), jwk_client=StubJwkClient())
     monkeypatch.setattr(
         "app.mcp_auth.jwt.decode",
         lambda *args, **kwargs: {
-            "azp": "chatgpt-client",
+            "client_id": "chatgpt-mcp-client",
             "sub": "user-id",
             "exp": 1_800_000_000,
-            "scope": "openid profile",
+            "scope": "openid email",
         },
     )
 
     token = asyncio.run(verifier.verify_token("signed-token"))
 
     assert token is not None
-    assert token.client_id == "chatgpt-client"
+    assert token.client_id == "chatgpt-mcp-client"
     assert token.subject == "user-id"
-    assert token.scopes == ["openid", "profile"]
+    assert token.scopes == ["openid", "email"]
     assert token.expires_at == 1_800_000_000
 
 
-def test_cloudflare_access_verifier_rejects_invalid_token(monkeypatch) -> None:
-    settings = CloudflareAccessSettings(
-        public_url="https://mcp.example.com/mcp",
-        issuer_url="https://team.cloudflareaccess.com",
-        jwks_url="https://team.cloudflareaccess.com/certs",
-        audience="access-audience",
-        path="/mcp",
-        port=3002,
-        required_scopes=[],
-    )
-    verifier = CloudflareAccessTokenVerifier(settings, jwk_client=StubJwkClient())
+def test_supabase_verifier_rejects_invalid_token(monkeypatch) -> None:
+    verifier = SupabaseTokenVerifier(_settings(), jwk_client=StubJwkClient())
 
     def fail(*args, **kwargs):
         import jwt
@@ -89,3 +82,18 @@ def test_cloudflare_access_verifier_rejects_invalid_token(monkeypatch) -> None:
     monkeypatch.setattr("app.mcp_auth.jwt.decode", fail)
 
     assert asyncio.run(verifier.verify_token("invalid-token")) is None
+
+
+def test_supabase_verifier_passes_audience_and_issuer_to_decode(monkeypatch) -> None:
+    verifier = SupabaseTokenVerifier(_settings(), jwk_client=StubJwkClient())
+    seen: dict = {}
+
+    def capture(*args, **kwargs):
+        seen.update(kwargs)
+        return {"sub": "u", "client_id": "c"}
+
+    monkeypatch.setattr("app.mcp_auth.jwt.decode", capture)
+    asyncio.run(verifier.verify_token("token"))
+
+    assert seen["issuer"] == "https://project.supabase.co/auth/v1"
+    assert seen["audience"] == "authenticated"

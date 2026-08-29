@@ -42,6 +42,17 @@ services:
       YT_LEARNER_SCHEDULER_HOUR: "8"
       YT_LEARNER_SCHEDULER_MINUTE: "0"
 
+  mcp:
+    <<: *app-service
+    command: python -m app.mcp_server --http
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=prod
+      MCP_PORT: "3002"
+    ports:
+      - "${MCP_BIND_HOST:-127.0.0.1}:${MCP_HOST_PORT:-3002}:3002"
+
 networks:
   observability:
     external: true

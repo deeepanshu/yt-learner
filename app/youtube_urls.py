@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
@@ -12,6 +13,9 @@ class InvalidYouTubeUrl(ValueError):
 class ParsedYouTubeUrl:
     video_id: str
     canonical_url: str
+
+
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
 def parse_youtube_url(raw_url: str) -> ParsedYouTubeUrl:
@@ -44,3 +48,13 @@ def parse_youtube_url(raw_url: str) -> ParsedYouTubeUrl:
         video_id=video_id,
         canonical_url=f"https://www.youtube.com/watch?v={video_id}",
     )
+
+
+def parse_youtube_url_or_id(raw: str) -> ParsedYouTubeUrl:
+    value = raw.strip()
+    if _VIDEO_ID_RE.fullmatch(value):
+        return ParsedYouTubeUrl(
+            video_id=value,
+            canonical_url=f"https://www.youtube.com/watch?v={value}",
+        )
+    return parse_youtube_url(value)

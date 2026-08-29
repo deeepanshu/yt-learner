@@ -8,14 +8,18 @@ dependencies = [
     "discord.py>=2.4.0",
     "opentelemetry-exporter-otlp-proto-http>=1.38.0",
     "opentelemetry-sdk>=1.38.0",
+    "mcp>=2.1.1",
     "openai>=2.0.0",
     "psycopg[binary]>=3.2.0",
+    "pyjwt>=2.13.0",
     "python-dotenv>=1.0.0",
     "youtube-transcript-api>=0.6.2",
 ]
 
 [project.scripts]
 yt-learner-discord = "app.discord_bot:main"
+yt-learner-mcp = "app.mcp_server:main"
+yt-learner-mcp-http = "app.mcp_server:http_main"
 yt-learner-migrate = "app.migrate:main"
 yt-learner-scheduler = "app.scheduler_cli:main"
 yt-learner-scheduler-loop = "app.scheduler_loop:main"
@@ -27,12 +31,8 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 package = true
-
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"app/migrations" = "app/migrations"
 
 [dependency-groups]
 dev = [

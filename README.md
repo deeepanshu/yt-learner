@@ -112,6 +112,50 @@ Optional values:
 
 Compose pins OTEL to `http://otel-collector:4318`. Do not use `localhost` from inside the app containers.
 
+## MCP Server
+
+`yt-learner` exposes one read-only tool, `get_youtube_transcript`, which returns English YouTube transcripts. It accepts watch, shorts, embed, and `youtu.be` URLs, or an 11-character video ID. Results contain the canonical URL, video ID, plain text, and timestamped segments.
+
+### Local stdio
+
+Use this only with local MCP hosts such as Claude Code or Cursor:
+
+```bash
+make run-mcp
+```
+
+### ChatGPT: Cloudflare Access-protected HTTP
+
+ChatGPT needs a public HTTPS Streamable HTTP endpoint. The `mcp` Compose service listens only on the Pi loopback interface; Cloudflare Tunnel is the only public ingress.
+
+Set these values in the production `.env`:
+
+```text
+MCP_PUBLIC_URL=https://ytlearner.deepanshujain.me/yt/api/mcp
+MCP_ACCESS_ISSUER_URL=<the exact iss claim from Cloudflare Access tokens>
+MCP_ACCESS_JWKS_URL=<the Access application JWKS endpoint>
+MCP_ACCESS_AUDIENCE=<the Access application AUD tag>
+MCP_PATH=/yt/api/mcp
+# Optional. Required OAuth scopes, space-separated.
+MCP_ACCESS_REQUIRED_SCOPES=
+MCP_BIND_HOST=127.0.0.1
+MCP_HOST_PORT=3002
+```
+
+Deploy the Compose stack, then configure Cloudflare:
+
+1. Route `ytlearner.deepanshujain.me` through Cloudflare Tunnel to `http://127.0.0.1:3002`.
+2. Create an Access MCP application for `https://ytlearner.deepanshujain.me/yt/api/mcp`.
+3. Enable managed OAuth and restrict its Access policy to your identity.
+4. Set the exact issuer, JWKS URL, and application AUD tag Cloudflare gives that application in `.env`.
+5. In ChatGPT developer mode, add `https://ytlearner.deepanshujain.me/yt/api/mcp` as the custom MCP endpoint and complete the Access OAuth flow.
+
+The HTTP server validates every bearer token's RS256 signature, issuer, audience, and expiry before it dispatches a tool. The MCP SDK serves protected-resource metadata under `/.well-known/oauth-protected-resource/`; the app also respects `MCP_PATH` (default `/mcp`, set to `/yt/api/mcp` here). Do not replace Access managed OAuth with a generic browser-login rule.
+
+The same endpoint works with any remote MCP host that supports Streamable HTTP and OAuth discovery. ChatGPT custom MCP apps require a supported plan and developer mode.
+
+English transcripts only, same constraint as the Discord worker. Videos without captions, private/unavailable videos, or YouTube-blocked requests return a tool error.
+
 ## Watched Channels
 
 Use Discord slash commands to manage watched YouTube channels:
@@ -163,6 +207,7 @@ The dashboard `grafana/dashboards/yt-learner.json` is copied into Grafana on dep
 - Add dependencies with `uv add <package>`.
 - Add dev dependencies with `uv add --dev <package>`.
 - Validate config locally with `make check`.
+- Run the local transcript MCP server with `make run-mcp`.
 - Run both bot and worker locally with `make run-all`.
 - Apply migrations with `uv run yt-learner-migrate`.
 - Build the Docker image with `make docker-build`.
@@ -174,8 +219,7 @@ The dashboard `grafana/dashboards/yt-learner.json` is copied into Grafana on dep
 - Watched YouTube channel scheduling through `/watch`
 - Postgres-backed durable job queue in `app.job_queue`
 - Postgres-backed watch, source, and note persistence
-- Separate worker execution in `app.worker`
-- Shared processing pipeline in `app.pipeline`
+- MCP transcript service: local stdio plus Cloudflare Access-protected Streamable HTTP for ChatGPT
 - Notes stored as `learning_records.markdown` and sent to Discord as attachments
 
 ## Notes

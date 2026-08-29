@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass
-from typing import Any
 
 import jwt
 from jwt import PyJWKClient
@@ -11,6 +11,8 @@ from jwt.exceptions import PyJWKClientError, PyJWTError
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 _ALLOWED_ALGORITHMS = ["ES256", "RS256", "EdDSA"]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,8 @@ class SupabaseTokenVerifier(TokenVerifier):
     async def verify_token(self, token: str) -> AccessToken | None:
         try:
             claims = await asyncio.to_thread(self._decode, token)
-        except (PyJWKClientError, PyJWTError, ValueError):
+        except (PyJWKClientError, PyJWTError, ValueError) as exc:
+            logger.warning("Rejected Supabase MCP bearer token: %s", type(exc).__name__)
             return None
 
         client_id = str(claims.get("client_id") or claims.get("azp") or self.settings.audience)

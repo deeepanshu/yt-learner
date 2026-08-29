@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.scheduler_cli import run_scheduler_once
-from app.telemetry import configure_logging
+from app.telemetry import configure_logging, configure_telemetry
 
 LOGGER = logging.getLogger(__name__)
 
@@ -100,8 +100,9 @@ def run_scheduler_loop(
 
 def main() -> int:
     configure_logging("yt-learner-scheduler")
+    telemetry = configure_telemetry("yt-learner-scheduler")
     config = load_scheduler_loop_config()
-    run_scheduler_loop(config=config)
+    run_scheduler_loop(config=config, run_once=lambda: run_scheduler_once(telemetry))
     return 0
 
 

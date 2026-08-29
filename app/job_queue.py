@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import json
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
+
+from psycopg.types.json import Jsonb
+
+from app.db import as_datetime, connect
 
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -19,18 +20,6 @@ TASK_ANSWER_VIDEO_QUESTION = "answer_video_question"
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _serialize_timestamp(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.astimezone(timezone.utc).isoformat()
-
-
-def _parse_timestamp(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.fromisoformat(value)
 
 
 @dataclass(frozen=True)
@@ -47,7 +36,7 @@ class Job:
     started_at: datetime | None
     finished_at: datetime | None
     learning_record_id: int | None
-    result_path: str | None
+    result_filename: str | None
     error: str | None
 
     @property
@@ -100,10 +89,8 @@ class Job:
 
 
 class JobQueue:
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
 
     def enqueue_summarize_video(
         self,
@@ -169,8 +156,8 @@ class JobQueue:
         priority: int,
     ) -> Job:
         created_at = utc_now()
-        with self._connect() as conn:
-            cursor = conn.execute(
+        with connect(self.database_url) as conn:
+            row = conn.execute(
                 """
                 INSERT INTO jobs (
                     task_type,
@@ -181,157 +168,135 @@ class JobQueue:
                     priority,
                     attempts,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
                 """,
                 (
                     task_type,
                     source,
                     requested_by,
-                    json.dumps(input_data),
+                    Jsonb(input_data),
                     STATUS_QUEUED,
                     priority,
                     0,
-                    _serialize_timestamp(created_at),
+                    created_at,
                 ),
-            )
-            if cursor.lastrowid is None:
-                raise RuntimeError("Unable to enqueue job without row id")
-            job_id = int(cursor.lastrowid)
-        return self.get_job(job_id)
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Unable to enqueue job")
+        return self._row_to_job(row)
 
     def get_job(self, job_id: int) -> Job:
-        with self._connect() as conn:
-            row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        with connect(self.database_url) as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE id = %s", (job_id,)).fetchone()
         if row is None:
             raise LookupError(f"Job {job_id} does not exist")
         return self._row_to_job(row)
 
     def claim_next_job(self) -> Job | None:
-        with self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+        with connect(self.database_url) as conn:
+            with conn.transaction():
+                row = conn.execute(
+                    """
+                    SELECT * FROM jobs
+                    WHERE status = %s
+                    ORDER BY priority DESC, id ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                    """,
+                    (STATUS_QUEUED,),
+                ).fetchone()
+                if row is None:
+                    return None
+
+                started_at = utc_now()
+                attempts = int(row["attempts"]) + 1
+                updated = conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status = %s, attempts = %s, started_at = %s, error = NULL
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (STATUS_RUNNING, attempts, started_at, int(row["id"])),
+                ).fetchone()
+        if updated is None:
+            return None
+        return self._row_to_job(updated)
+
+    def mark_done(
+        self,
+        job_id: int,
+        *,
+        learning_record_id: int | None,
+        result_filename: str,
+    ) -> Job:
+        finished_at = utc_now()
+        with connect(self.database_url) as conn:
             row = conn.execute(
                 """
-                SELECT * FROM jobs
-                WHERE status = ?
-                ORDER BY priority DESC, id ASC
-                LIMIT 1
+                UPDATE jobs
+                SET status = %s, finished_at = %s, learning_record_id = %s, result_filename = %s, error = NULL
+                WHERE id = %s
+                RETURNING *
                 """,
-                (STATUS_QUEUED,),
+                (STATUS_DONE, finished_at, learning_record_id, result_filename, job_id),
             ).fetchone()
-            if row is None:
-                conn.commit()
-                return None
-
-            started_at = utc_now()
-            attempts = int(row["attempts"]) + 1
-            conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, attempts = ?, started_at = ?, error = NULL
-                WHERE id = ?
-                """,
-                (
-                    STATUS_RUNNING,
-                    attempts,
-                    _serialize_timestamp(started_at),
-                    int(row["id"]),
-                ),
-            )
-            conn.commit()
-        return self.get_job(int(row["id"]))
-
-    def mark_done(self, job_id: int, *, learning_record_id: int | None, result_path: str) -> Job:
-        finished_at = utc_now()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE jobs
-                SET status = ?, finished_at = ?, learning_record_id = ?, result_path = ?, error = NULL
-                WHERE id = ?
-                """,
-                (STATUS_DONE, _serialize_timestamp(finished_at), learning_record_id, result_path, job_id),
-            )
-        return self.get_job(job_id)
+        if row is None:
+            raise LookupError(f"Job {job_id} does not exist")
+        return self._row_to_job(row)
 
     def mark_failed(self, job_id: int, *, error: str) -> Job:
         finished_at = utc_now()
-        with self._connect() as conn:
-            conn.execute(
+        with connect(self.database_url) as conn:
+            row = conn.execute(
                 """
                 UPDATE jobs
-                SET status = ?, finished_at = ?, error = ?
-                WHERE id = ?
+                SET status = %s, finished_at = %s, error = %s
+                WHERE id = %s
+                RETURNING *
                 """,
-                (STATUS_FAILED, _serialize_timestamp(finished_at), error, job_id),
-            )
-        return self.get_job(job_id)
+                (STATUS_FAILED, finished_at, error, job_id),
+            ).fetchone()
+        if row is None:
+            raise LookupError(f"Job {job_id} does not exist")
+        return self._row_to_job(row)
 
     def update_reply_message_id(self, job_id: int, *, reply_message_id: int) -> Job:
         job = self.get_job(job_id)
         input_data = dict(job.input_data)
         input_data["reply_message_id"] = reply_message_id
-        with self._connect() as conn:
-            conn.execute(
+        with connect(self.database_url) as conn:
+            row = conn.execute(
                 """
                 UPDATE jobs
-                SET input_json = ?
-                WHERE id = ?
+                SET input_json = %s
+                WHERE id = %s
+                RETURNING *
                 """,
-                (json.dumps(input_data), job_id),
-            )
-        return self.get_job(job_id)
+                (Jsonb(input_data), job_id),
+            ).fetchone()
+        if row is None:
+            raise LookupError(f"Job {job_id} does not exist")
+        return self._row_to_job(row)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _initialize(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS jobs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    task_type TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    requested_by TEXT NOT NULL,
-                    input_json TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    priority INTEGER NOT NULL DEFAULT 0,
-                    attempts INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    started_at TEXT,
-                    finished_at TEXT,
-                    learning_record_id INTEGER,
-                    result_path TEXT,
-                    error TEXT
-                )
-                """
-            )
-            columns = {
-                row["name"]
-                for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
-            }
-            if "learning_record_id" not in columns:
-                conn.execute("ALTER TABLE jobs ADD COLUMN learning_record_id INTEGER")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_jobs_status_priority_id ON jobs(status, priority DESC, id ASC)"
-            )
-
-    def _row_to_job(self, row: sqlite3.Row) -> Job:
+    def _row_to_job(self, row: dict[str, object]) -> Job:
+        raw_input = row["input_json"]
+        input_data = raw_input if isinstance(raw_input, dict) else {}
+        learning_record_id = row["learning_record_id"]
         return Job(
             id=int(row["id"]),
             task_type=str(row["task_type"]),
             source=str(row["source"]),
             requested_by=str(row["requested_by"]),
-            input_data=json.loads(str(row["input_json"])),
+            input_data=input_data,
             status=str(row["status"]),
             priority=int(row["priority"]),
             attempts=int(row["attempts"]),
-            created_at=_parse_timestamp(row["created_at"]) or utc_now(),
-            started_at=_parse_timestamp(row["started_at"]),
-            finished_at=_parse_timestamp(row["finished_at"]),
-            learning_record_id=row["learning_record_id"],
-            result_path=row["result_path"],
-            error=row["error"],
+            created_at=as_datetime(row["created_at"]) or utc_now(),
+            started_at=as_datetime(row["started_at"]),
+            finished_at=as_datetime(row["finished_at"]),
+            learning_record_id=int(learning_record_id) if learning_record_id is not None else None,
+            result_filename=str(row["result_filename"]) if row["result_filename"] is not None else None,
+            error=str(row["error"]) if row["error"] is not None else None,
         )

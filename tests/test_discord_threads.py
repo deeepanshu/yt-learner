@@ -1,8 +1,8 @@
 from app.channel_watches import DiscordThreadRepository
 
 
-def test_save_and_find_discord_thread(tmp_path) -> None:
-    repository = DiscordThreadRepository(tmp_path / "data" / "yt_learner.sqlite3")
+def test_save_and_find_discord_thread(database_url) -> None:
+    repository = DiscordThreadRepository(database_url)
 
     saved = repository.save_thread(
         guild_id="guild-1",
@@ -27,8 +27,8 @@ def test_save_and_find_discord_thread(tmp_path) -> None:
     assert repository.find_thread_by_thread_id(2002) == saved
 
 
-def test_save_thread_updates_existing_mapping(tmp_path) -> None:
-    repository = DiscordThreadRepository(tmp_path / "data" / "yt_learner.sqlite3")
+def test_save_thread_updates_existing_mapping(database_url) -> None:
+    repository = DiscordThreadRepository(database_url)
 
     first = repository.save_thread(
         guild_id="guild-1",

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 
 from app.extractor import ExtractionError, ExtractionInput
@@ -46,7 +45,8 @@ class ProcessedVideo:
     video_id: str
     title: str
     url: str
-    output_path: Path
+    filename: str
+    markdown: str
     reused_existing: bool
 
 
@@ -126,7 +126,8 @@ class VideoProcessor:
                 video_id=parsed.video_id,
                 title=existing.title,
                 url=parsed.canonical_url,
-                output_path=existing.artifact_path,
+                filename=existing.filename,
+                markdown=existing.markdown,
                 reused_existing=True,
             )
 
@@ -174,6 +175,7 @@ class VideoProcessor:
             video_id=parsed.video_id,
             title=title,
             url=parsed.canonical_url,
-            output_path=stored.path,
+            filename=stored.filename,
+            markdown=stored.markdown,
             reused_existing=stored.reused_existing,
         )

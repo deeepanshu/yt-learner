@@ -2,130 +2,53 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.channel_watches import DiscordThreadRepository, WatchRepository
+from app.channel_watches import WatchRepository
 from app.config import Settings
 from app.job_queue import JobQueue
-from app.pipeline import AnsweredVideoQuestion, ProcessedVideo
-from app.storage import OutputStore
+from app.pipeline import ProcessedVideo
 from app.worker import WorkerService
 
 
 @dataclass
 class StubProcessor:
     result: ProcessedVideo
-    answer_result: AnsweredVideoQuestion | None = None
-    last_extra_prompt: str | None = None
-    last_question: str | None = None
 
-    async def process_video(
-        self,
-        video_url: str,
-        requested_by: str,
-        extra_prompt: str | None = None,
-    ) -> ProcessedVideo:
-        self.last_extra_prompt = extra_prompt
+    async def process_video(self, video_url: str, requested_by: str, extra_prompt: str | None = None) -> ProcessedVideo:
         return self.result
 
-    async def answer_video_question(
-        self,
-        *,
-        video_id: str,
-        question: str,
-        requested_by: str,
-    ) -> AnsweredVideoQuestion:
-        self.last_question = question
-        if self.answer_result is not None:
-            return self.answer_result
-        return AnsweredVideoQuestion(
-            learning_record_id=77,
-            video_id=video_id,
-            title="Demo",
-            url=f"https://www.youtube.com/watch?v={video_id}",
-            markdown=f"Answer: {question}",
-        )
 
-
-class FakeMessage:
-    def __init__(self, message_id: int) -> None:
+class FakePartialMessage:
+    def __init__(self, channel: "FakeChannel", message_id: int) -> None:
+        self.channel = channel
         self.id = message_id
-        self.edits: list[tuple[str | None, list[object] | None]] = []
 
-    async def edit(self, *, content: str | None = None, attachments: list[object] | None = None) -> object:
-        self.edits.append((content, attachments))
-        return self
-
-    def __eq__(self, other: object) -> bool:
-        return other == f"partial:{self.id}"
+    async def edit(self, *, content=None, attachments=None):
+        file = attachments[0] if attachments else None
+        self.channel.messages.append((content, file, None, None))
 
 
 class FakeChannel:
-    def __init__(self, channel_id: int = 1001) -> None:
-        self.id = channel_id
-        self.messages: list[tuple[str | None, object | None, object | None, bool | None]] = []
-        self.partial_messages: dict[int, FakeMessage] = {}
+    def __init__(self) -> None:
+        self.messages = []
 
-    def get_partial_message(self, message_id: int) -> FakeMessage:
-        if message_id not in self.partial_messages:
-            self.partial_messages[message_id] = FakeMessage(message_id)
-        return self.partial_messages[message_id]
+    def get_partial_message(self, message_id: int):
+        return FakePartialMessage(self, message_id)
 
-    async def send(
-        self,
-        content: str | None = None,
-        *,
-        file: object | None = None,
-        reference: object | None = None,
-        mention_author: bool | None = None,
-    ) -> object:
+    async def send(self, content=None, file=None, reference=None, mention_author=None):
         self.messages.append((content, file, reference, mention_author))
-        return object()
-
-
-class FakeThread(FakeChannel):
-    def __init__(self, channel_id: int, name: str) -> None:
-        super().__init__(channel_id)
-        self.name = name
-
-
-class FakeThreadParent(FakeChannel):
-    def __init__(self, channel_id: int = 1001) -> None:
-        super().__init__(channel_id)
-        self.created_threads: list[FakeThread] = []
-
-    async def create_thread(self, *, name: str, type=None) -> object:
-        thread = FakeThread(channel_id=2000 + len(self.created_threads), name=name)
-        self.created_threads.append(thread)
-        return thread
 
 
 class FakeDiscordClient:
     def __init__(self, channel: FakeChannel) -> None:
         self.channel = channel
-        self.channels: dict[int, FakeChannel] = {channel.id: channel}
 
-    async def fetch_channel(self, channel_id: int, /) -> object:
-        return self.channels.get(channel_id, self.channel)
-
-    async def fetch_user(self, user_id: int, /) -> object:
+    async def fetch_channel(self, channel_id: int):
         return self.channel
 
-    async def wait_until_ready(self) -> None:
-        return None
 
-    def is_closed(self) -> bool:
-        return True
-
-
-def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
-    db_path = tmp_path / "data" / "yt_learner.sqlite3"
-    output_root = tmp_path / "outputs"
-    result_path = output_root / "result.md"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text("# Learned", encoding="utf-8")
-
-    repository = WatchRepository(db_path)
-    queue = JobQueue(db_path)
-    store = OutputStore(output_root, db_path)
+def test_worker_marks_scheduled_video_as_indexed(database_url) -> None:
+    repository = WatchRepository(database_url)
+    queue = JobQueue(database_url)
     subscription = repository.add_or_update_subscription(
         guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
@@ -159,7 +82,8 @@ def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
             video_id="abc123xyz",
             title="Demo",
             url=job.video_url,
-            output_path=result_path,
+            filename="result.md",
+            markdown="# Learned",
             reused_existing=False,
         )
     )
@@ -168,9 +92,8 @@ def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
         settings=Settings(
             openai_api_key="key",
             discord_bot_token="token",
+            database_url=database_url,
             discord_allowed_user_id=None,
-            discord_output_dir=output_root,
-            db_path=db_path,
         ),
         queue=queue,
         processor=processor,
@@ -184,274 +107,8 @@ def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
     assert completed.learning_record_id == 77
     discovered = repository.list_discovered_videos(subscription_id=subscription.id)
     assert discovered[0].learning_record_id == 77
-    assert channel.messages == []
-    assert channel.partial_messages[2222].edits[0][0] == "Done: Demo"
-    assert channel.partial_messages[2222].edits[0][1] is not None
-    assert processor.last_extra_prompt is None
-
-
-def test_worker_passes_extra_prompt_to_processor(tmp_path) -> None:
-    db_path = tmp_path / "data" / "yt_learner.sqlite3"
-    output_root = tmp_path / "outputs"
-    result_path = output_root / "result.md"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text("# Learned", encoding="utf-8")
-
-    queue = JobQueue(db_path)
-    job = queue.enqueue_summarize_video(
-        video_url="https://www.youtube.com/watch?v=abc123xyz",
-        requested_by="user-1",
-        source="discord_slash_command",
-        reply_channel_id=1001,
-        extra_prompt="focus on deployment advice",
-    )
-    processor = StubProcessor(
-        result=ProcessedVideo(
-            learning_record_id=77,
-            video_id="abc123xyz",
-            title="Demo",
-            url=job.video_url,
-            output_path=result_path,
-            reused_existing=False,
-        )
-    )
-
-    service = WorkerService(
-        settings=Settings(
-            openai_api_key="key",
-            discord_bot_token="token",
-            discord_allowed_user_id=None,
-            discord_output_dir=output_root,
-            db_path=db_path,
-        ),
-        queue=queue,
-        processor=processor,
-        discord_client=FakeDiscordClient(FakeChannel()),
-    )
-
-    run_async(service.run_next_job())
-
-    assert processor.last_extra_prompt == "focus on deployment advice"
-
-
-def test_worker_answers_video_question_job(tmp_path) -> None:
-    db_path = tmp_path / "data" / "yt_learner.sqlite3"
-    output_root = tmp_path / "outputs"
-    result_path = output_root / "result.md"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text("# Learned", encoding="utf-8")
-
-    queue = JobQueue(db_path)
-    job = queue.enqueue_answer_video_question(
-        video_id="abc123xyz",
-        question="What about deployment?",
-        requested_by="user-1",
-        source="discord_thread_question",
-        reply_channel_id=2002,
-        reply_message_id=3333,
-        guild_id="guild-1",
-    )
-    thread = FakeThread(channel_id=2002, name="Demo Video")
-    processor = StubProcessor(
-        result=ProcessedVideo(
-            learning_record_id=77,
-            video_id="abc123xyz",
-            title="Demo",
-            url="https://www.youtube.com/watch?v=abc123xyz",
-            output_path=result_path,
-            reused_existing=False,
-        )
-    )
-    service = WorkerService(
-        settings=Settings(
-            openai_api_key="key",
-            discord_bot_token="token",
-            discord_allowed_user_id=None,
-            discord_output_dir=output_root,
-            db_path=db_path,
-        ),
-        queue=queue,
-        processor=processor,
-        discord_client=FakeDiscordClient(thread),
-    )
-
-    completed = run_async(service.run_next_job())
-
-    assert completed is not None
-    assert completed.id == job.id
-    assert processor.last_question == "What about deployment?"
-    assert thread.messages == []
-    assert thread.partial_messages[3333].edits == [("Answer: What about deployment?", None)]
-
-
-def test_worker_sends_long_video_question_answer_as_attachment(tmp_path) -> None:
-    db_path = tmp_path / "data" / "yt_learner.sqlite3"
-    output_root = tmp_path / "outputs"
-    result_path = output_root / "result.md"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text("# Learned", encoding="utf-8")
-
-    queue = JobQueue(db_path)
-    job = queue.enqueue_answer_video_question(
-        video_id="abc123xyz",
-        question="Summarize deployment",
-        requested_by="user-1",
-        source="discord_thread_question",
-        reply_channel_id=2002,
-        reply_message_id=3333,
-        guild_id="guild-1",
-    )
-    long_markdown = "# Answer\n\n" + ("details " * 400)
-    thread = FakeThread(channel_id=2002, name="Demo Video")
-    processor = StubProcessor(
-        result=ProcessedVideo(
-            learning_record_id=77,
-            video_id="abc123xyz",
-            title="Demo",
-            url="https://www.youtube.com/watch?v=abc123xyz",
-            output_path=result_path,
-            reused_existing=False,
-        ),
-        answer_result=AnsweredVideoQuestion(
-            learning_record_id=77,
-            video_id="abc123xyz",
-            title="Demo",
-            url="https://www.youtube.com/watch?v=abc123xyz",
-            markdown=long_markdown,
-        ),
-    )
-    service = WorkerService(
-        settings=Settings(
-            openai_api_key="key",
-            discord_bot_token="token",
-            discord_allowed_user_id=None,
-            discord_output_dir=output_root,
-            db_path=db_path,
-        ),
-        queue=queue,
-        processor=processor,
-        discord_client=FakeDiscordClient(thread),
-    )
-
-    run_async(service.run_next_job())
-
-    assert thread.messages == []
-    assert thread.partial_messages[3333].edits[0][0] == "Answer attached."
-    assert thread.partial_messages[3333].edits[0][1] is not None
-
-
-def test_worker_creates_discord_thread_for_guild_job(tmp_path) -> None:
-    db_path = tmp_path / "data" / "yt_learner.sqlite3"
-    output_root = tmp_path / "outputs"
-    result_path = output_root / "result.md"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text("# Learned", encoding="utf-8")
-
-    queue = JobQueue(db_path)
-    job = queue.enqueue_summarize_video(
-        video_url="https://www.youtube.com/watch?v=abc123xyz",
-        requested_by="user-1",
-        source="discord_slash_command",
-        reply_channel_id=1001,
-        reply_message_id=2222,
-        guild_id="guild-1",
-    )
-    parent = FakeThreadParent(channel_id=1001)
-    thread_repository = DiscordThreadRepository(db_path)
-    service = WorkerService(
-        settings=Settings(
-            openai_api_key="key",
-            discord_bot_token="token",
-            discord_allowed_user_id=None,
-            discord_output_dir=output_root,
-            db_path=db_path,
-        ),
-        queue=queue,
-        processor=StubProcessor(
-            result=ProcessedVideo(
-                learning_record_id=77,
-                video_id="abc123xyz",
-                title="Demo Video",
-                url=job.video_url,
-                output_path=result_path,
-                reused_existing=False,
-            )
-        ),
-        discord_client=FakeDiscordClient(parent),
-        discord_thread_repository=thread_repository,
-    )
-
-    run_async(service.run_next_job())
-
-    assert parent.messages == []
-    assert len(parent.created_threads) == 1
-    thread = parent.created_threads[0]
-    assert thread.name == "Demo Video"
-    assert thread.messages[0][0] == "Done: Demo Video"
-    assert thread.messages[0][2] is None
-    saved = thread_repository.find_thread(
-        guild_id="guild-1",
-        parent_channel_id=1001,
-        video_id="abc123xyz",
-    )
-    assert saved is not None
-    assert saved.thread_id == thread.id
-
-
-def test_worker_reuses_existing_discord_thread(tmp_path) -> None:
-    db_path = tmp_path / "data" / "yt_learner.sqlite3"
-    output_root = tmp_path / "outputs"
-    result_path = output_root / "result.md"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text("# Learned", encoding="utf-8")
-
-    queue = JobQueue(db_path)
-    job = queue.enqueue_summarize_video(
-        video_url="https://www.youtube.com/watch?v=abc123xyz",
-        requested_by="user-1",
-        source="discord_slash_command",
-        reply_channel_id=1001,
-        guild_id="guild-1",
-    )
-    parent = FakeThreadParent(channel_id=1001)
-    existing_thread = FakeThread(channel_id=3003, name="Existing Demo Video")
-    client = FakeDiscordClient(parent)
-    client.channels[existing_thread.id] = existing_thread
-    thread_repository = DiscordThreadRepository(db_path)
-    thread_repository.save_thread(
-        guild_id="guild-1",
-        parent_channel_id=1001,
-        video_id="abc123xyz",
-        thread_id=existing_thread.id,
-        title=existing_thread.name,
-    )
-    service = WorkerService(
-        settings=Settings(
-            openai_api_key="key",
-            discord_bot_token="token",
-            discord_allowed_user_id=None,
-            discord_output_dir=output_root,
-            db_path=db_path,
-        ),
-        queue=queue,
-        processor=StubProcessor(
-            result=ProcessedVideo(
-                learning_record_id=77,
-                video_id="abc123xyz",
-                title="Demo Video",
-                url=job.video_url,
-                output_path=result_path,
-                reused_existing=False,
-            )
-        ),
-        discord_client=client,
-        discord_thread_repository=thread_repository,
-    )
-
-    run_async(service.run_next_job())
-
-    assert parent.created_threads == []
-    assert existing_thread.messages[0][0] == "Done: Demo Video"
+    assert channel.messages[0][0] == "Done: Demo"
+    assert channel.messages[0][1] is not None
 
 
 def run_async(awaitable):

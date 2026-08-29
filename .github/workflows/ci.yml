@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: yt_learner
+          POSTGRES_PASSWORD: yt_learner
+          POSTGRES_DB: yt_learner_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U yt_learner -d yt_learner_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync and test
+        env:
+          TEST_DATABASE_URL: postgres://yt_learner:yt_learner@127.0.0.1:55432/yt_learner_test
+        run: |
+          uv sync --frozen --all-groups
+          uv run pytest

@@ -1,19 +1,26 @@
 x-app-service: &app-service
-  image: yt-learner:local
+  image: ghcr.io/deeepanshu/yt-learner:${IMAGE_TAG:-local}
   env_file:
     - ${YT_LEARNER_ENV_FILE:-.env}
   environment:
-    DISCORD_OUTPUT_DIR: /app/outputs
-    YOUTUBE_LEARNER_DB_PATH: /app/data/yt_learner.sqlite3
-  volumes:
-    - ./data:/app/data
-    - ./outputs:/app/outputs
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    OTEL_RESOURCE_ATTRIBUTES: deployment.environment=prod
   restart: unless-stopped
   networks:
     - default
     - observability
+    - homelab
 
 services:
+  migrate:
+    <<: *app-service
+    build:
+      context: .
+    profiles: ["migrate"]
+    command: yt-learner-migrate
+    restart: "no"
+
   discord:
     <<: *app-service
     build:
@@ -28,12 +35,15 @@ services:
     <<: *app-service
     command: yt-learner-scheduler-loop
     environment:
-      DISCORD_OUTPUT_DIR: /app/outputs
-      YOUTUBE_LEARNER_DB_PATH: /app/data/yt_learner.sqlite3
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=prod
       YT_LEARNER_SCHEDULER_TIMEZONE: Asia/Bangkok
       YT_LEARNER_SCHEDULER_HOUR: "8"
       YT_LEARNER_SCHEDULER_MINUTE: "0"
 
 networks:
   observability:
+    external: true
+  homelab:
     external: true

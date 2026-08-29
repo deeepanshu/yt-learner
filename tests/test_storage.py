@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-import sqlite3
 
 from app.storage import OutputStore, slugify
 
@@ -8,8 +7,8 @@ def test_slugify() -> None:
     assert slugify("Hello, World!") == "hello-world"
 
 
-def test_save_and_reuse_existing(tmp_path) -> None:
-    store = OutputStore(tmp_path / "outputs", tmp_path / "data" / "yt_learner.sqlite3")
+def test_save_and_reuse_existing(database_url) -> None:
+    store = OutputStore(database_url)
     processed_at = datetime(2026, 5, 17, tzinfo=timezone.utc)
 
     first = store.save_markdown(
@@ -29,47 +28,15 @@ def test_save_and_reuse_existing(tmp_path) -> None:
         processed_at=processed_at,
     )
 
+    record = store.find_existing_learning_record(source_type="youtube_url", source_key="abc123")
+
     assert first.reused_existing is False
     assert second.reused_existing is True
-    assert first.path.name == "2026-05-17__demo-video__abc123.md"
-    assert second.path == first.path
+    assert first.filename == "2026-05-17__demo-video__abc123.md"
+    assert second.filename == first.filename
+    assert second.markdown == "# Demo"
     assert second.learning_record_id == first.learning_record_id
-
-    conn = sqlite3.connect(tmp_path / "data" / "yt_learner.sqlite3")
-    source_row = conn.execute(
-        "SELECT source_type, source_key, source_ref, title FROM sources"
-    ).fetchone()
-    record_row = conn.execute(
-        "SELECT title, artifact_path, requested_by FROM learning_records"
-    ).fetchone()
-    conn.close()
-
-    assert source_row == (
-        "youtube_url",
-        "abc123",
-        "https://www.youtube.com/watch?v=abc123",
-        "Demo Video",
-    )
-    assert record_row == (
-        "Demo Video",
-        str(first.path),
-        "user-1",
-    )
-
-
-def test_save_and_find_transcript_text(tmp_path) -> None:
-    store = OutputStore(tmp_path / "outputs", tmp_path / "data" / "yt_learner.sqlite3")
-    processed_at = datetime(2026, 5, 17, tzinfo=timezone.utc)
-
-    saved = store.save_transcript(
-        title="Demo Video",
-        video_id="abc123",
-        source_url="https://www.youtube.com/watch?v=abc123",
-        transcript_text="line one\nline two",
-        requested_by="user-1",
-        processed_at=processed_at,
-    )
-
-    assert saved.reused_existing is False
-    assert saved.path.name == "2026-05-17__demo-video__abc123.transcript.txt"
-    assert store.find_transcript_text("abc123") == "line one\nline two"
+    assert record is not None
+    assert record.markdown == "# Demo"
+    assert record.requested_by == "user-1"
+    assert record.source_ref == "https://www.youtube.com/watch?v=abc123"

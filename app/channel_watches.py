@@ -1,36 +1,284 @@
 from __future__ import annotations
 
-import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 
-from app import DiscordThread, WatchedChannel, WatchedVideo
+from app import DiscordThread
+from app.db import as_datetime, connect
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _serialize_timestamp(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.astimezone(timezone.utc).isoformat()
+@dataclass(frozen=True)
+class WatchedChannel:
+    id: int
+    guild_id: str
+    youtube_channel_id: str
+    youtube_channel_ref: str
+    youtube_channel_title: str
+    discord_channel_id: int
+    is_active: bool
+    bootstrap_completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
-def _parse_timestamp(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.fromisoformat(value)
+@dataclass(frozen=True)
+class WatchedVideo:
+    id: int
+    watched_channel_id: int
+    video_id: str
+    video_url: str
+    title: str
+    published_at: datetime | None
+    discovered_at: datetime
+    queued_job_id: int | None
+    learning_record_id: int | None
+
+
+class WatchRepository:
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
+
+    def add_or_update_subscription(
+        self,
+        *,
+        guild_id: str,
+        youtube_channel_id: str,
+        youtube_channel_ref: str,
+        youtube_channel_title: str,
+        discord_channel_id: int,
+    ) -> WatchedChannel:
+        timestamp = utc_now()
+        with connect(self.database_url) as conn:
+            row = conn.execute(
+                """
+                INSERT INTO watched_channels (
+                    guild_id,
+                    youtube_channel_id,
+                    youtube_channel_ref,
+                    youtube_channel_title,
+                    discord_channel_id,
+                    is_active,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, TRUE, %s, %s)
+                ON CONFLICT (guild_id, youtube_channel_id)
+                DO UPDATE SET
+                    youtube_channel_ref = excluded.youtube_channel_ref,
+                    youtube_channel_title = excluded.youtube_channel_title,
+                    discord_channel_id = excluded.discord_channel_id,
+                    is_active = TRUE,
+                    updated_at = excluded.updated_at
+                RETURNING *
+                """,
+                (
+                    guild_id,
+                    youtube_channel_id,
+                    youtube_channel_ref,
+                    youtube_channel_title,
+                    discord_channel_id,
+                    timestamp,
+                    timestamp,
+                ),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Unable to create watched channel")
+        return self._row_to_watched_channel(row)
+
+    def list_subscriptions(self, *, guild_id: str, active_only: bool = True) -> list[WatchedChannel]:
+        query = """
+            SELECT * FROM watched_channels
+            WHERE guild_id = %s
+        """
+        params: list[object] = [guild_id]
+        if active_only:
+            query += " AND is_active"
+        query += " ORDER BY youtube_channel_title ASC, id ASC"
+
+        with connect(self.database_url) as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_watched_channel(row) for row in rows]
+
+    def get_active_subscriptions(self) -> list[WatchedChannel]:
+        with connect(self.database_url) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM watched_channels
+                WHERE is_active
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        return [self._row_to_watched_channel(row) for row in rows]
+
+    def deactivate_subscription_by_id(self, *, guild_id: str, subscription_id: int) -> WatchedChannel | None:
+        timestamp = utc_now()
+        with connect(self.database_url) as conn:
+            row = conn.execute(
+                """
+                UPDATE watched_channels
+                SET is_active = FALSE, updated_at = %s
+                WHERE guild_id = %s AND id = %s AND is_active
+                RETURNING *
+                """,
+                (timestamp, guild_id, subscription_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_watched_channel(row)
+
+    def deactivate_subscription_by_channel_id(
+        self, *, guild_id: str, youtube_channel_id: str
+    ) -> WatchedChannel | None:
+        timestamp = utc_now()
+        with connect(self.database_url) as conn:
+            row = conn.execute(
+                """
+                UPDATE watched_channels
+                SET is_active = FALSE, updated_at = %s
+                WHERE guild_id = %s AND youtube_channel_id = %s AND is_active
+                RETURNING *
+                """,
+                (timestamp, guild_id, youtube_channel_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_watched_channel(row)
+
+    def mark_bootstrap_complete(self, subscription_id: int) -> None:
+        timestamp = utc_now()
+        with connect(self.database_url) as conn:
+            conn.execute(
+                """
+                UPDATE watched_channels
+                SET bootstrap_completed_at = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (timestamp, timestamp, subscription_id),
+            )
+
+    def record_discovered_video(
+        self,
+        *,
+        subscription_id: int,
+        video_id: str,
+        video_url: str,
+        title: str,
+        published_at: datetime | None,
+    ) -> bool:
+        timestamp = utc_now()
+        with connect(self.database_url) as conn:
+            row = conn.execute(
+                """
+                INSERT INTO watched_channel_videos (
+                    watched_channel_id,
+                    video_id,
+                    video_url,
+                    title,
+                    published_at,
+                    discovered_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (watched_channel_id, video_id) DO NOTHING
+                RETURNING id
+                """,
+                (
+                    subscription_id,
+                    video_id,
+                    video_url,
+                    title,
+                    published_at,
+                    timestamp,
+                ),
+            ).fetchone()
+        return row is not None
+
+    def mark_video_enqueued(self, *, subscription_id: int, video_id: str, queued_job_id: int) -> None:
+        with connect(self.database_url) as conn:
+            conn.execute(
+                """
+                UPDATE watched_channel_videos
+                SET queued_job_id = %s
+                WHERE watched_channel_id = %s AND video_id = %s
+                """,
+                (queued_job_id, subscription_id, video_id),
+            )
+
+    def mark_video_indexed_by_job(self, *, queued_job_id: int, learning_record_id: int) -> None:
+        with connect(self.database_url) as conn:
+            conn.execute(
+                """
+                UPDATE watched_channel_videos
+                SET learning_record_id = %s
+                WHERE queued_job_id = %s
+                """,
+                (learning_record_id, queued_job_id),
+            )
+
+    def mark_video_existing_learning(
+        self, *, subscription_id: int, video_id: str, learning_record_id: int
+    ) -> None:
+        with connect(self.database_url) as conn:
+            conn.execute(
+                """
+                UPDATE watched_channel_videos
+                SET learning_record_id = %s
+                WHERE watched_channel_id = %s AND video_id = %s
+                """,
+                (learning_record_id, subscription_id, video_id),
+            )
+
+    def list_discovered_videos(self, *, subscription_id: int) -> list[WatchedVideo]:
+        with connect(self.database_url) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM watched_channel_videos
+                WHERE watched_channel_id = %s
+                ORDER BY discovered_at ASC, id ASC
+                """,
+                (subscription_id,),
+            ).fetchall()
+        return [self._row_to_watched_video(row) for row in rows]
+
+    def _row_to_watched_channel(self, row: dict[str, object]) -> WatchedChannel:
+        return WatchedChannel(
+            id=int(row["id"]),
+            guild_id=str(row["guild_id"]),
+            youtube_channel_id=str(row["youtube_channel_id"]),
+            youtube_channel_ref=str(row["youtube_channel_ref"]),
+            youtube_channel_title=str(row["youtube_channel_title"]),
+            discord_channel_id=int(row["discord_channel_id"]),
+            is_active=bool(row["is_active"]),
+            bootstrap_completed_at=as_datetime(row["bootstrap_completed_at"]),
+            created_at=as_datetime(row["created_at"]) or utc_now(),
+            updated_at=as_datetime(row["updated_at"]) or utc_now(),
+        )
+
+    def _row_to_watched_video(self, row: dict[str, object]) -> WatchedVideo:
+        queued_job_id = row["queued_job_id"]
+        learning_record_id = row["learning_record_id"]
+        return WatchedVideo(
+            id=int(row["id"]),
+            watched_channel_id=int(row["watched_channel_id"]),
+            video_id=str(row["video_id"]),
+            video_url=str(row["video_url"]),
+            title=str(row["title"]),
+            published_at=as_datetime(row["published_at"]),
+            discovered_at=as_datetime(row["discovered_at"]) or utc_now(),
+            queued_job_id=int(queued_job_id) if queued_job_id is not None else None,
+            learning_record_id=int(learning_record_id) if learning_record_id is not None else None,
+        )
 
 
 DISCORD_THREAD_PURPOSE_LEARNING = "learning"
 
 
 class DiscordThreadRepository:
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
 
     def find_thread(
         self,
@@ -39,15 +287,15 @@ class DiscordThreadRepository:
         parent_channel_id: int,
         video_id: str,
     ) -> DiscordThread | None:
-        with self._connect() as conn:
+        with connect(self.database_url) as conn:
             row = conn.execute(
                 """
                 SELECT * FROM discord_threads
-                WHERE guild_id = ?
-                  AND parent_channel_id = ?
-                  AND purpose = ?
+                WHERE guild_id = %s
+                  AND parent_channel_id = %s
+                  AND purpose = %s
                   AND source_type = 'youtube_url'
-                  AND source_key = ?
+                  AND source_key = %s
                 """,
                 (guild_id, parent_channel_id, DISCORD_THREAD_PURPOSE_LEARNING, video_id),
             ).fetchone()
@@ -56,11 +304,11 @@ class DiscordThreadRepository:
         return self._row_to_discord_thread(row)
 
     def find_thread_by_thread_id(self, thread_id: int) -> DiscordThread | None:
-        with self._connect() as conn:
+        with connect(self.database_url) as conn:
             row = conn.execute(
                 """
                 SELECT * FROM discord_threads
-                WHERE thread_id = ?
+                WHERE thread_id = %s
                 """,
                 (thread_id,),
             ).fetchone()
@@ -78,8 +326,7 @@ class DiscordThreadRepository:
         title: str,
     ) -> DiscordThread:
         timestamp = utc_now()
-        serialized_timestamp = _serialize_timestamp(timestamp) or timestamp.isoformat()
-        with self._connect() as conn:
+        with connect(self.database_url) as conn:
             row = conn.execute(
                 """
                 INSERT INTO discord_threads (
@@ -93,8 +340,8 @@ class DiscordThreadRepository:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(guild_id, parent_channel_id, purpose, source_type, source_key)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (guild_id, parent_channel_id, purpose, source_type, source_key)
                 DO UPDATE SET
                     thread_id = excluded.thread_id,
                     title = excluded.title,
@@ -109,84 +356,15 @@ class DiscordThreadRepository:
                     video_id,
                     thread_id,
                     title,
-                    serialized_timestamp,
-                    serialized_timestamp,
+                    timestamp,
+                    timestamp,
                 ),
             ).fetchone()
         if row is None:
             raise RuntimeError("Unable to save Discord thread")
         return self._row_to_discord_thread(row)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _initialize(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS discord_threads (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    guild_id TEXT NOT NULL,
-                    parent_channel_id INTEGER NOT NULL,
-                    purpose TEXT NOT NULL,
-                    source_type TEXT NOT NULL,
-                    source_key TEXT NOT NULL,
-                    thread_id INTEGER NOT NULL,
-                    title TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(guild_id, parent_channel_id, purpose, source_type, source_key)
-                )
-                """
-            )
-            self._import_legacy_learning_threads(conn)
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_discord_threads_thread_id
-                ON discord_threads(thread_id)
-                """
-            )
-
-    def _import_legacy_learning_threads(self, conn: sqlite3.Connection) -> None:
-        legacy_exists = conn.execute(
-            """
-            SELECT 1 FROM sqlite_master
-            WHERE type = 'table' AND name = 'learning_threads'
-            """
-        ).fetchone()
-        if legacy_exists is None:
-            return
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO discord_threads (
-                guild_id,
-                parent_channel_id,
-                purpose,
-                source_type,
-                source_key,
-                thread_id,
-                title,
-                created_at,
-                updated_at
-            )
-            SELECT
-                guild_id,
-                parent_channel_id,
-                ?,
-                source_type,
-                source_key,
-                thread_id,
-                title,
-                created_at,
-                updated_at
-            FROM learning_threads
-            """,
-            (DISCORD_THREAD_PURPOSE_LEARNING,),
-        )
-
-    def _row_to_discord_thread(self, row: sqlite3.Row) -> DiscordThread:
+    def _row_to_discord_thread(self, row: dict[str, object]) -> DiscordThread:
         return DiscordThread(
             id=int(row["id"]),
             guild_id=str(row["guild_id"]),
@@ -196,297 +374,6 @@ class DiscordThreadRepository:
             source_key=str(row["source_key"]),
             thread_id=int(row["thread_id"]),
             title=str(row["title"]),
-            created_at=_parse_timestamp(row["created_at"]) or utc_now(),
-            updated_at=_parse_timestamp(row["updated_at"]) or utc_now(),
-        )
-
-
-class WatchRepository:
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
-
-    def add_or_update_subscription(
-        self,
-        *,
-        guild_id: str,
-        youtube_channel_id: str,
-        youtube_channel_ref: str,
-        youtube_channel_title: str,
-        discord_channel_id: int,
-    ) -> WatchedChannel:
-        timestamp = utc_now()
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                INSERT INTO watched_channels (
-                    guild_id,
-                    youtube_channel_id,
-                    youtube_channel_ref,
-                    youtube_channel_title,
-                    discord_channel_id,
-                    is_active,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-                ON CONFLICT(guild_id, youtube_channel_id)
-                DO UPDATE SET
-                    youtube_channel_ref = excluded.youtube_channel_ref,
-                    youtube_channel_title = excluded.youtube_channel_title,
-                    discord_channel_id = excluded.discord_channel_id,
-                    is_active = 1,
-                    updated_at = excluded.updated_at
-                RETURNING *
-                """,
-                (
-                    guild_id,
-                    youtube_channel_id,
-                    youtube_channel_ref,
-                    youtube_channel_title,
-                    discord_channel_id,
-                    _serialize_timestamp(timestamp),
-                    _serialize_timestamp(timestamp),
-                ),
-            ).fetchone()
-        if row is None:
-            raise RuntimeError("Unable to create watched channel")
-        return self._row_to_watched_channel(row)
-
-    def list_subscriptions(self, *, guild_id: str, active_only: bool = True) -> list[WatchedChannel]:
-        query = """
-            SELECT * FROM watched_channels
-            WHERE guild_id = ?
-        """
-        params: list[object] = [guild_id]
-        if active_only:
-            query += " AND is_active = 1"
-        query += " ORDER BY youtube_channel_title ASC, id ASC"
-
-        with self._connect() as conn:
-            rows = conn.execute(query, params).fetchall()
-        return [self._row_to_watched_channel(row) for row in rows]
-
-    def get_active_subscriptions(self) -> list[WatchedChannel]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM watched_channels
-                WHERE is_active = 1
-                ORDER BY id ASC
-                """
-            ).fetchall()
-        return [self._row_to_watched_channel(row) for row in rows]
-
-    def deactivate_subscription_by_id(self, *, guild_id: str, subscription_id: int) -> WatchedChannel | None:
-        timestamp = utc_now()
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                UPDATE watched_channels
-                SET is_active = 0, updated_at = ?
-                WHERE guild_id = ? AND id = ? AND is_active = 1
-                RETURNING *
-                """,
-                (_serialize_timestamp(timestamp), guild_id, subscription_id),
-            ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_watched_channel(row)
-
-    def deactivate_subscription_by_channel_id(
-        self, *, guild_id: str, youtube_channel_id: str
-    ) -> WatchedChannel | None:
-        timestamp = utc_now()
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                UPDATE watched_channels
-                SET is_active = 0, updated_at = ?
-                WHERE guild_id = ? AND youtube_channel_id = ? AND is_active = 1
-                RETURNING *
-                """,
-                (_serialize_timestamp(timestamp), guild_id, youtube_channel_id),
-            ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_watched_channel(row)
-
-    def mark_bootstrap_complete(self, subscription_id: int) -> None:
-        timestamp = utc_now()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE watched_channels
-                SET bootstrap_completed_at = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    _serialize_timestamp(timestamp),
-                    _serialize_timestamp(timestamp),
-                    subscription_id,
-                ),
-            )
-
-    def record_discovered_video(
-        self,
-        *,
-        subscription_id: int,
-        video_id: str,
-        video_url: str,
-        title: str,
-        published_at: datetime | None,
-    ) -> bool:
-        timestamp = utc_now()
-        with self._connect() as conn:
-            cursor = conn.execute(
-                """
-                INSERT OR IGNORE INTO watched_channel_videos (
-                    watched_channel_id,
-                    video_id,
-                    video_url,
-                    title,
-                    published_at,
-                    discovered_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    subscription_id,
-                    video_id,
-                    video_url,
-                    title,
-                    _serialize_timestamp(published_at),
-                    _serialize_timestamp(timestamp),
-                ),
-            )
-        return int(cursor.rowcount) > 0
-
-    def mark_video_enqueued(self, *, subscription_id: int, video_id: str, queued_job_id: int) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE watched_channel_videos
-                SET queued_job_id = ?
-                WHERE watched_channel_id = ? AND video_id = ?
-                """,
-                (queued_job_id, subscription_id, video_id),
-            )
-
-    def mark_video_indexed_by_job(self, *, queued_job_id: int, learning_record_id: int) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE watched_channel_videos
-                SET learning_record_id = ?
-                WHERE queued_job_id = ?
-                """,
-                (learning_record_id, queued_job_id),
-            )
-
-    def mark_video_existing_learning(
-        self, *, subscription_id: int, video_id: str, learning_record_id: int
-    ) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE watched_channel_videos
-                SET learning_record_id = ?
-                WHERE watched_channel_id = ? AND video_id = ?
-                """,
-                (learning_record_id, subscription_id, video_id),
-            )
-
-    def list_discovered_videos(self, *, subscription_id: int) -> list[WatchedVideo]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM watched_channel_videos
-                WHERE watched_channel_id = ?
-                ORDER BY discovered_at ASC, id ASC
-                """,
-                (subscription_id,),
-            ).fetchall()
-        return [self._row_to_watched_video(row) for row in rows]
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _initialize(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS watched_channels (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    guild_id TEXT NOT NULL,
-                    youtube_channel_id TEXT NOT NULL,
-                    youtube_channel_ref TEXT NOT NULL,
-                    youtube_channel_title TEXT NOT NULL,
-                    discord_channel_id INTEGER NOT NULL,
-                    is_active INTEGER NOT NULL DEFAULT 1,
-                    bootstrap_completed_at TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(guild_id, youtube_channel_id)
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS watched_channel_videos (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    watched_channel_id INTEGER NOT NULL,
-                    video_id TEXT NOT NULL,
-                    video_url TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    published_at TEXT,
-                    discovered_at TEXT NOT NULL,
-                    queued_job_id INTEGER,
-                    learning_record_id INTEGER,
-                    UNIQUE(watched_channel_id, video_id),
-                    FOREIGN KEY(watched_channel_id) REFERENCES watched_channels(id)
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_watched_channels_active
-                ON watched_channels(is_active, id)
-                """
-            )
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_watched_channel_videos_job
-                ON watched_channel_videos(queued_job_id)
-                """
-            )
-
-    def _row_to_watched_channel(self, row: sqlite3.Row) -> WatchedChannel:
-        return WatchedChannel(
-            id=int(row["id"]),
-            guild_id=str(row["guild_id"]),
-            youtube_channel_id=str(row["youtube_channel_id"]),
-            youtube_channel_ref=str(row["youtube_channel_ref"]),
-            youtube_channel_title=str(row["youtube_channel_title"]),
-            discord_channel_id=int(row["discord_channel_id"]),
-            is_active=bool(row["is_active"]),
-            bootstrap_completed_at=_parse_timestamp(row["bootstrap_completed_at"]),
-            created_at=_parse_timestamp(row["created_at"]) or utc_now(),
-            updated_at=_parse_timestamp(row["updated_at"]) or utc_now(),
-        )
-
-    def _row_to_watched_video(self, row: sqlite3.Row) -> WatchedVideo:
-        return WatchedVideo(
-            id=int(row["id"]),
-            watched_channel_id=int(row["watched_channel_id"]),
-            video_id=str(row["video_id"]),
-            video_url=str(row["video_url"]),
-            title=str(row["title"]),
-            published_at=_parse_timestamp(row["published_at"]),
-            discovered_at=_parse_timestamp(row["discovered_at"]) or utc_now(),
-            queued_job_id=row["queued_job_id"],
-            learning_record_id=row["learning_record_id"],
+            created_at=as_datetime(row["created_at"]) or utc_now(),
+            updated_at=as_datetime(row["updated_at"]) or utc_now(),
         )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 from app import scheduler_cli
 
@@ -28,13 +27,12 @@ class FakeScheduler:
         )()
 
 
-def test_run_scheduler_once_uses_current_queue_and_store(monkeypatch, tmp_path: Path) -> None:
+def test_run_scheduler_once_uses_current_queue_and_store(monkeypatch, database_url) -> None:
     settings = type(
         "Settings",
         (),
         {
-            "db_path": tmp_path / "data" / "yt_learner.sqlite3",
-            "discord_output_dir": tmp_path / "outputs",
+            "database_url": database_url,
         },
     )()
 
@@ -45,7 +43,6 @@ def test_run_scheduler_once_uses_current_queue_and_store(monkeypatch, tmp_path: 
 
     assert result == 0
     assert FakeScheduler.init_args is not None
-    assert FakeScheduler.init_args["queue"].db_path == settings.db_path
-    assert FakeScheduler.init_args["watch_repository"].db_path == settings.db_path
-    assert FakeScheduler.init_args["store"].db_path == settings.db_path
-    assert FakeScheduler.init_args["store"].root == settings.discord_output_dir
+    assert FakeScheduler.init_args["queue"].database_url == settings.database_url
+    assert FakeScheduler.init_args["watch_repository"].database_url == settings.database_url
+    assert FakeScheduler.init_args["store"].database_url == settings.database_url

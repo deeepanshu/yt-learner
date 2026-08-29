@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import cast
 
 import discord
@@ -13,9 +12,8 @@ def dummy_settings() -> Settings:
     return Settings(
         openai_api_key="key",
         discord_bot_token="token",
+        database_url="postgres://yt_learner:yt_learner@127.0.0.1:55432/yt_learner_test",
         discord_allowed_user_id=None,
-        discord_output_dir=Path("outputs"),
-        db_path=Path("data/yt_learner.sqlite3"),
     )
 
 

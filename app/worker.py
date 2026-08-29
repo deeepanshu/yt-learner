@@ -116,7 +116,7 @@ class WorkerService:
         self.processor = processor
         self.discord_client = discord_client
         self.watch_repository = watch_repository
-        self.discord_thread_repository = discord_thread_repository or DiscordThreadRepository(settings.db_path)
+        self.discord_thread_repository = discord_thread_repository or DiscordThreadRepository(settings.database_url)
         self.telemetry = telemetry or NoopTelemetry()
 
     async def run_next_job(self) -> Job | None:
@@ -169,7 +169,7 @@ class WorkerService:
         done_job = self.queue.mark_done(
             job.id,
             learning_record_id=result.learning_record_id,
-            result_path=str(result.output_path),
+            result_filename=result.filename,
         )
         if self.watch_repository is not None:
             self.watch_repository.mark_video_indexed_by_job(
@@ -183,12 +183,12 @@ class WorkerService:
             reused_existing=result.reused_existing,
         )
         LOGGER.info(
-            "worker_job_done job_id=%s source=%s learning_record_id=%s reused_existing=%s output_path=%s duration_seconds=%.3f",
+            "worker_job_done job_id=%s source=%s learning_record_id=%s reused_existing=%s filename=%s duration_seconds=%.3f",
             job.id,
             job.source,
             result.learning_record_id,
             result.reused_existing,
-            result.output_path,
+            result.filename,
             time.perf_counter() - started,
         )
         await self._safe_notify_success(done_job, result)
@@ -205,7 +205,7 @@ class WorkerService:
         done_job = self.queue.mark_done(
             job.id,
             learning_record_id=result.learning_record_id,
-            result_path="",
+            result_filename="",
         )
         self.telemetry.record_job_processed(
             source=job.source,
@@ -237,23 +237,23 @@ class WorkerService:
             return
         prefix = "Reused existing notes" if result.reused_existing else "Done"
         LOGGER.info(
-            "worker_success_notification_started job_id=%s attachment_path=%s channel_type=%s",
+            "worker_success_notification_started job_id=%s filename=%s channel_type=%s",
             job.id,
-            result.output_path,
+            result.filename,
             type(target.channel).__name__,
         )
         content = f"{prefix}: {result.title}"
         if target.use_reply_reference and await self._try_edit_status_message(
             job,
             content=content,
-            file=discord.File(result.output_path),
+            file=discord.File(io.BytesIO(result.markdown.encode("utf-8")), filename=result.filename),
         ):
             return
 
         reference = self._notification_reference(job, target.channel) if target.use_reply_reference else None
         await target.channel.send(
             content=content,
-            file=discord.File(result.output_path),
+            file=discord.File(io.BytesIO(result.markdown.encode("utf-8")), filename=result.filename),
             reference=reference,
             mention_author=False,
         )
@@ -471,9 +471,9 @@ def main() -> int:
     args = parse_args()
     configure_logging("yt-learner-worker")
     settings = load_settings()
-    queue = JobQueue(settings.db_path)
+    queue = JobQueue(settings.database_url)
     processor = build_processor(settings)
-    watch_repository = WatchRepository(settings.db_path)
+    watch_repository = WatchRepository(settings.database_url)
 
     if args.run_once:
         client = discord.Client(intents=discord.Intents.none())

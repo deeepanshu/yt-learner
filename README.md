@@ -146,13 +146,12 @@ MCP_HOST_PORT=3003
 Before exposing the endpoint, add a Cloudflare WAF rate-limit rule for:
 
 ```text
-Hostname: ytlearner.deepanshujain.me
-Path:     /yt/api/mcp*
-Limit:    30 requests per minute per client IP
-Action:   Block for 1 minute
+Path:     /yt/api/mcp (starts with)
+Limit:    10 requests per 10 seconds per client IP
+Action:   Block for 10 seconds
 ```
 
-This prevents the public transcript endpoint becoming an abuseable YouTube proxy. The app itself does not handle user data or authentication.
+The zone is on the Cloudflare Free plan, which restricts rate-limit rules to a path-only expression (no hostname), a fixed 10-second counting period, and a 10-second mitigation timeout. The rule is zone-scoped, so the path match only applies to this zone's traffic. This prevents the public transcript endpoint becoming an abuseable YouTube proxy. The app itself does not handle user data or authentication.
 
 ### YouTube egress
 

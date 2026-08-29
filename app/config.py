@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import os
 from dataclasses import dataclass
-
-from dotenv import load_dotenv
-
+from pathlib import Path
 
 @dataclass(frozen=True)
 class Settings:
@@ -34,8 +33,13 @@ def _optional_int(name: str) -> int | None:
         raise RuntimeError(f"Environment variable {name} must be an integer") from exc
 
 
+def load_environment_file() -> None:
+    dotenv = importlib.import_module("dotenv")
+    dotenv.load_dotenv(dotenv_path=Path(".env"), override=False)
+
+
 def load_settings() -> Settings:
-    load_dotenv()
+    load_environment_file()
     return Settings(
         openai_api_key=_required("OPENAI_API_KEY"),
         discord_bot_token=_required("DISCORD_BOT_TOKEN"),

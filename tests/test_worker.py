@@ -13,8 +13,18 @@ from app.worker import WorkerService
 class StubProcessor:
     result: ProcessedVideo
 
-    async def process_video(self, video_url: str, requested_by: str) -> ProcessedVideo:
+    async def process_video(self, video_url: str, requested_by: str, extra_prompt: str | None = None) -> ProcessedVideo:
         return self.result
+
+
+class FakePartialMessage:
+    def __init__(self, channel: "FakeChannel", message_id: int) -> None:
+        self.channel = channel
+        self.id = message_id
+
+    async def edit(self, *, content=None, attachments=None):
+        file = attachments[0] if attachments else None
+        self.channel.messages.append((content, file, None, None))
 
 
 class FakeChannel:
@@ -22,7 +32,7 @@ class FakeChannel:
         self.messages = []
 
     def get_partial_message(self, message_id: int):
-        return f"partial:{message_id}"
+        return FakePartialMessage(self, message_id)
 
     async def send(self, content=None, file=None, reference=None, mention_author=None):
         self.messages.append((content, file, reference, mention_author))
@@ -97,10 +107,8 @@ def test_worker_marks_scheduled_video_as_indexed(database_url) -> None:
     assert completed.learning_record_id == 77
     discovered = repository.list_discovered_videos(subscription_id=subscription.id)
     assert discovered[0].learning_record_id == 77
-    assert channel.messages[0][0] == f"Done for job #{job.id}: Demo"
+    assert channel.messages[0][0] == "Done: Demo"
     assert channel.messages[0][1] is not None
-    assert channel.messages[0][2] == "partial:2222"
-    assert channel.messages[0][3] is False
 
 
 def run_async(awaitable):

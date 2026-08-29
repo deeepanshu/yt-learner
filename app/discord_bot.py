@@ -7,10 +7,10 @@ import re
 import discord
 from discord import app_commands
 
-from app.channel_watches import WatchRepository
+from app.channel_watches import DiscordThreadRepository, WatchRepository
 from app.config import Settings, load_settings
 from app.extractor import LearningExtractor
-from app.job_queue import JobQueue
+from app.job_queue import Job, JobQueue
 from app.pipeline import VideoProcessor
 from app.storage import OutputStore
 from app.telemetry import NoopTelemetry, configure_logging, configure_telemetry
@@ -18,6 +18,7 @@ from app.youtube_channels import YouTubeChannelError, resolve_youtube_channel
 from app.youtube_urls import InvalidYouTubeUrl, parse_youtube_url
 
 YOUTUBE_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:youtube\.com|youtu\.be)/\S+")
+MAX_EXTRA_PROMPT_CHARS = 1500
 LOGGER = logging.getLogger(__name__)
 
 
@@ -28,6 +29,7 @@ class LearnerBot(discord.Client):
         settings: Settings,
         queue: JobQueue,
         watch_repository: WatchRepository,
+        discord_thread_repository: DiscordThreadRepository,
         telemetry=None,
     ) -> None:
         intents = discord.Intents.default()
@@ -36,13 +38,17 @@ class LearnerBot(discord.Client):
         self.settings = settings
         self.queue = queue
         self.watch_repository = watch_repository
+        self.discord_thread_repository = discord_thread_repository
         self.telemetry = telemetry or NoopTelemetry()
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self) -> None:
         @self.tree.command(name="learn", description="Process a YouTube video into learning notes")
-        @app_commands.describe(url="A YouTube video URL")
-        async def learn(interaction: discord.Interaction, url: str) -> None:
+        @app_commands.describe(
+            url="A YouTube video URL",
+            extra_prompt="Optional focus, question, or information to look for in the video",
+        )
+        async def learn(interaction: discord.Interaction, url: str, extra_prompt: str | None = None) -> None:
             LOGGER.info(
                 "discord_command_received command=learn guild_id=%s channel_id=%s user_id=%s raw_url=%r",
                 interaction.guild_id,
@@ -75,6 +81,15 @@ class LearnerBot(discord.Client):
                 return
 
             try:
+                normalized_extra_prompt = normalize_extra_prompt(extra_prompt)
+            except ValueError:
+                await interaction.response.send_message(
+                    f"The extra prompt must be {MAX_EXTRA_PROMPT_CHARS} characters or fewer.",
+                    ephemeral=True,
+                )
+                return
+
+            try:
                 parsed = parse_youtube_url(url)
             except InvalidYouTubeUrl:
                 LOGGER.info(
@@ -102,8 +117,12 @@ class LearnerBot(discord.Client):
                 requested_by=str(interaction.user.id),
                 source="discord_slash_command",
                 reply_channel_id=getattr(interaction.channel, "id", None),
+                guild_id=str(interaction.guild_id),
+                extra_prompt=normalized_extra_prompt,
             )
-            await interaction.response.send_message(self._queued_text(job.id, parsed.canonical_url))
+            await interaction.response.send_message(
+                self._learning_status_text(parsed.canonical_url, normalized_extra_prompt)
+            )
             response_message = await interaction.original_response()
             self.queue.update_reply_message_id(job.id, reply_message_id=response_message.id)
 
@@ -302,6 +321,8 @@ class LearnerBot(discord.Client):
                 getattr(message.author, "id", None),
             )
             return
+        if await self._maybe_enqueue_thread_question(message):
+            return
         matched_url = extract_youtube_url(message.content)
         if matched_url is None:
             LOGGER.info(
@@ -345,8 +366,33 @@ class LearnerBot(discord.Client):
             requested_by=str(message.author.id),
             source="discord_message",
             reply_channel_id=getattr(message.channel, "id", None),
+            guild_id=str(getattr(message.guild, "id", "")),
         )
-        await message.channel.send(self._queued_text(job.id, parsed.canonical_url))
+        status_message = await message.channel.send(self._learning_status_text(parsed.canonical_url, None))
+        self.queue.update_reply_message_id(job.id, reply_message_id=status_message.id)
+
+    async def _maybe_enqueue_thread_question(self, message: discord.Message) -> bool:
+        question = " ".join(message.content.split())
+        if not question:
+            return False
+        channel_id = getattr(message.channel, "id", None)
+        if channel_id is None:
+            return False
+        thread_record = self.discord_thread_repository.find_thread_by_thread_id(int(channel_id))
+        if thread_record is None:
+            return False
+        job = self.queue.enqueue_answer_video_question(
+            video_id=thread_record.video_id,
+            question=question,
+            requested_by=str(message.author.id),
+            source="discord_thread_question",
+            reply_channel_id=int(channel_id),
+            reply_message_id=message.id,
+            guild_id=str(getattr(message.guild, "id", thread_record.guild_id)),
+        )
+        thinking_message = await message.channel.send("Thinking...", reference=message, mention_author=False)
+        self.queue.update_reply_message_id(job.id, reply_message_id=thinking_message.id)
+        return True
 
     def _is_allowed_interaction(self, interaction: discord.Interaction) -> bool:
         return interaction.guild_id is not None
@@ -358,10 +404,11 @@ class LearnerBot(discord.Client):
         permissions = getattr(interaction.user, "guild_permissions", None)
         return bool(getattr(permissions, "manage_guild", False))
 
-    def _is_allowed_location(self, channel: discord.abc.Messageable) -> bool:
+    def _is_allowed_location(self, channel: object) -> bool:
         channel_id = getattr(channel, "id", None)
+        parent_id = getattr(channel, "parent_id", None)
         if self.settings.allowed_channel_id:
-            return str(channel_id) == self.settings.allowed_channel_id
+            return str(channel_id) == self.settings.allowed_channel_id or str(parent_id) == self.settings.allowed_channel_id
         return True
 
     def _remove_subscription(self, *, guild_id: str, raw_reference: str):
@@ -388,13 +435,18 @@ class LearnerBot(discord.Client):
         source: str,
         reply_channel_id: int | None,
         reply_message_id: int | None = None,
-    ) -> object:
+        guild_id: str | None = None,
+        extra_prompt: str | None = None,
+    ) -> Job:
+        normalized_extra_prompt = normalize_extra_prompt(extra_prompt)
         job = self.queue.enqueue_summarize_video(
             video_url=video_url,
             requested_by=requested_by,
             source=source,
             reply_channel_id=reply_channel_id,
             reply_message_id=reply_message_id,
+            guild_id=guild_id,
+            extra_prompt=normalized_extra_prompt,
         )
         LOGGER.info(
             "job_enqueued job_id=%s source=%s requested_by=%s reply_channel_id=%s video_url=%s",
@@ -407,8 +459,10 @@ class LearnerBot(discord.Client):
         self.telemetry.record_job_enqueued(source=source)
         return job
 
-    def _queued_text(self, job_id: int, url: str) -> str:
-        return f"Queued job #{job_id} for {url}"
+    def _learning_status_text(self, url: str, extra_prompt: str | None) -> str:
+        if extra_prompt:
+            return f"Checking '{_preview_text(extra_prompt, limit=120)}' from {url}"
+        return f"Learning from {url}"
 
     def _format_subscription_list(self, subscriptions) -> str:
         return "\n".join(
@@ -430,7 +484,14 @@ def build_processor(settings: Settings) -> VideoProcessor:
 def build_bot(settings: Settings, telemetry=None) -> LearnerBot:
     queue = JobQueue(settings.database_url)
     watch_repository = WatchRepository(settings.database_url)
-    return LearnerBot(settings=settings, queue=queue, watch_repository=watch_repository, telemetry=telemetry)
+    discord_thread_repository = DiscordThreadRepository(settings.database_url)
+    return LearnerBot(
+        settings=settings,
+        queue=queue,
+        watch_repository=watch_repository,
+        discord_thread_repository=discord_thread_repository,
+        telemetry=telemetry,
+    )
 
 
 def extract_youtube_url(message_content: str) -> str | None:
@@ -445,6 +506,17 @@ def _preview_text(value: str, *, limit: int = 200) -> str:
     if len(cleaned) <= limit:
         return cleaned
     return f"{cleaned[:limit]}..."
+
+
+def normalize_extra_prompt(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = " ".join(value.split())
+    if not cleaned:
+        return None
+    if len(cleaned) > MAX_EXTRA_PROMPT_CHARS:
+        raise ValueError("extra prompt is too long")
+    return cleaned
 
 
 def parse_args() -> argparse.Namespace:

@@ -101,6 +101,7 @@ def test_new_video_after_bootstrap_is_queued_once(database_url) -> None:
     assert result.jobs_enqueued == 1
     assert claimed is not None
     assert claimed.video_url == "https://www.youtube.com/watch?v=new-3"
+    assert claimed.guild_id == "guild-1"
     discovered = repository.list_discovered_videos(subscription_id=subscription.id)
     assert sorted(video.video_id for video in discovered) == ["new-1", "new-2", "new-3"]
     assert discovered[-1].queued_job_id == claimed.id

@@ -1,8 +1,6 @@
 x-app-service: &app-service
   image: ghcr.io/deeepanshu/yt-learner:${IMAGE_TAG:-local}
   env_file:
-    - /home/deepanshu/config/shared.env
-    - /home/deepanshu/config/shared.secrets.env
     - ${YT_LEARNER_ENV_FILE:-.env}
   environment:
     OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318

@@ -134,6 +134,7 @@ class ChannelScheduler:
                 requested_by=SCHEDULER_REQUESTED_BY,
                 source=SCHEDULER_SOURCE,
                 reply_channel_id=subscription.discord_channel_id,
+                guild_id=subscription.guild_id,
             )
             self.watch_repository.mark_video_enqueued(
                 subscription_id=subscription.id,

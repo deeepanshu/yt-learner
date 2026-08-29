@@ -1,5 +1,21 @@
-from app.extractor import ExtractionInput, SYSTEM_PROMPT, build_messages
+from collections.abc import Mapping
+from typing import cast
+
+from app.extractor import (
+    CHAT_SYSTEM_PROMPT,
+    CUSTOM_REQUEST_INSTRUCTIONS,
+    ExtractionInput,
+    SYSTEM_PROMPT,
+    build_messages,
+    build_question_messages,
+)
 from app.transcript import TranscriptData, TranscriptSegment
+
+
+def message_content(message: object) -> str:
+    content = cast(Mapping[str, object], message)["content"]
+    assert isinstance(content, str)
+    return content
 
 
 def test_build_messages_uses_expected_structure() -> None:
@@ -21,9 +37,47 @@ def test_build_messages_uses_expected_structure() -> None:
     )
 
     assert messages[0] == {"role": "system", "content": SYSTEM_PROMPT}
-    assert "Video title: Video Title" in messages[1]["content"]
-    assert "Processed timestamp: 2026-05-17T00:00:00+00:00" in messages[1]["content"]
-    assert "first line\nsecond line" in messages[1]["content"]
+    content = message_content(messages[1])
+    assert "Video title: Video Title" in content
+    assert "Processed timestamp: 2026-05-17T00:00:00+00:00" in content
+    assert "first line\nsecond line" in content
+    assert "Additional user request:" not in content
+
+
+def test_build_messages_uses_custom_prompt_instead_of_default_structure() -> None:
+    payload = ExtractionInput(
+        title="Video Title",
+        url="https://www.youtube.com/watch?v=abc123xyz",
+        transcript=TranscriptData(segments=[TranscriptSegment(start_seconds=0, text="transcript")]),
+        extra_prompt="focus on deployment advice",
+    )
+
+    messages = build_messages(
+        payload=payload,
+        processed_at="2026-05-17T00:00:00+00:00",
+        max_transcript_chars=None,
+    )
+
+    assert messages[0] == {"role": "system", "content": CUSTOM_REQUEST_INSTRUCTIONS}
+    assert "Use this structure exactly" not in message_content(messages[0])
+    content = message_content(messages[1])
+    assert "User request:\nfocus on deployment advice" in content
+    assert "Additional user request:" not in content
+
+
+def test_build_question_messages_uses_chat_prompt() -> None:
+    messages = build_question_messages(
+        title="Video Title",
+        url="https://www.youtube.com/watch?v=abc123xyz",
+        transcript_text="first line\nsecond line",
+        question="What about deployment?",
+        max_transcript_chars=None,
+    )
+
+    assert messages[0] == {"role": "system", "content": CHAT_SYSTEM_PROMPT}
+    content = message_content(messages[1])
+    assert "Question:\nWhat about deployment?" in content
+    assert "Transcript:\nfirst line\nsecond line" in content
 
 
 def test_build_messages_truncates_transcript() -> None:
@@ -39,4 +93,4 @@ def test_build_messages_truncates_transcript() -> None:
         max_transcript_chars=3,
     )
 
-    assert messages[1]["content"].endswith("abc")
+    assert message_content(messages[1]).endswith("abc")

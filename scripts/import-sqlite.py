@@ -156,6 +156,34 @@ def import_sqlite(sqlite_path: Path, database_url: str) -> None:
             )
 
         try:
+            thread_rows = sqlite.execute("SELECT * FROM discord_threads ORDER BY id").fetchall()
+        except sqlite3.OperationalError:
+            thread_rows = []
+        for row in thread_rows:
+            pg.execute(
+                """
+                INSERT INTO discord_threads (
+                    guild_id, parent_channel_id, purpose, source_type, source_key,
+                    thread_id, title, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (guild_id, parent_channel_id, purpose, source_type, source_key)
+                DO NOTHING
+                """,
+                (
+                    row["guild_id"],
+                    int(row["parent_channel_id"]),
+                    row["purpose"],
+                    row["source_type"],
+                    row["source_key"],
+                    int(row["thread_id"]),
+                    row["title"],
+                    _parse_timestamp(row["created_at"]) or datetime.now(timezone.utc),
+                    _parse_timestamp(row["updated_at"]) or datetime.now(timezone.utc),
+                ),
+            )
+
+        try:
             job_rows = sqlite.execute("SELECT * FROM jobs ORDER BY id").fetchall()
         except sqlite3.OperationalError:
             job_rows = []

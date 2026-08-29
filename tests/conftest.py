@@ -10,6 +10,7 @@ DEFAULT_TEST_DATABASE_URL = "postgres://yt_learner:yt_learner@127.0.0.1:55432/yt
 TRUNCATE_SQL = """
 TRUNCATE TABLE
     debug_artifacts,
+    discord_threads,
     watched_channel_videos,
     watched_channels,
     jobs,

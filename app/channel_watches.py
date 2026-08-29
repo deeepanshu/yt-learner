@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from app import DiscordThread
 from app.db import as_datetime, connect
 
 
@@ -269,4 +270,110 @@ class WatchRepository:
             discovered_at=as_datetime(row["discovered_at"]) or utc_now(),
             queued_job_id=int(queued_job_id) if queued_job_id is not None else None,
             learning_record_id=int(learning_record_id) if learning_record_id is not None else None,
+        )
+
+
+DISCORD_THREAD_PURPOSE_LEARNING = "learning"
+
+
+class DiscordThreadRepository:
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
+
+    def find_thread(
+        self,
+        *,
+        guild_id: str,
+        parent_channel_id: int,
+        video_id: str,
+    ) -> DiscordThread | None:
+        with connect(self.database_url) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM discord_threads
+                WHERE guild_id = %s
+                  AND parent_channel_id = %s
+                  AND purpose = %s
+                  AND source_type = 'youtube_url'
+                  AND source_key = %s
+                """,
+                (guild_id, parent_channel_id, DISCORD_THREAD_PURPOSE_LEARNING, video_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_discord_thread(row)
+
+    def find_thread_by_thread_id(self, thread_id: int) -> DiscordThread | None:
+        with connect(self.database_url) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM discord_threads
+                WHERE thread_id = %s
+                """,
+                (thread_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_discord_thread(row)
+
+    def save_thread(
+        self,
+        *,
+        guild_id: str,
+        parent_channel_id: int,
+        video_id: str,
+        thread_id: int,
+        title: str,
+    ) -> DiscordThread:
+        timestamp = utc_now()
+        with connect(self.database_url) as conn:
+            row = conn.execute(
+                """
+                INSERT INTO discord_threads (
+                    guild_id,
+                    parent_channel_id,
+                    purpose,
+                    source_type,
+                    source_key,
+                    thread_id,
+                    title,
+                    created_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (guild_id, parent_channel_id, purpose, source_type, source_key)
+                DO UPDATE SET
+                    thread_id = excluded.thread_id,
+                    title = excluded.title,
+                    updated_at = excluded.updated_at
+                RETURNING *
+                """,
+                (
+                    guild_id,
+                    parent_channel_id,
+                    DISCORD_THREAD_PURPOSE_LEARNING,
+                    "youtube_url",
+                    video_id,
+                    thread_id,
+                    title,
+                    timestamp,
+                    timestamp,
+                ),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Unable to save Discord thread")
+        return self._row_to_discord_thread(row)
+
+    def _row_to_discord_thread(self, row: dict[str, object]) -> DiscordThread:
+        return DiscordThread(
+            id=int(row["id"]),
+            guild_id=str(row["guild_id"]),
+            parent_channel_id=int(row["parent_channel_id"]),
+            purpose=str(row["purpose"]),
+            source_type=str(row["source_type"]),
+            source_key=str(row["source_key"]),
+            thread_id=int(row["thread_id"]),
+            title=str(row["title"]),
+            created_at=as_datetime(row["created_at"]) or utc_now(),
+            updated_at=as_datetime(row["updated_at"]) or utc_now(),
         )

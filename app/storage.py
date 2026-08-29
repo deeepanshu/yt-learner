@@ -91,9 +91,11 @@ class OutputStore:
         title: str,
         video_id: str,
         processed_at: datetime | None = None,
+        filename_suffix: str | None = None,
     ) -> str:
         timestamp = (processed_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
-        return f"{timestamp}__{slugify(title)}__{video_id}.md"
+        suffix = f"__{slugify(filename_suffix)}" if filename_suffix else ""
+        return f"{timestamp}__{slugify(title)}__{video_id}{suffix}.md"
 
     def save_markdown(
         self,
@@ -104,8 +106,14 @@ class OutputStore:
         markdown: str,
         requested_by: str,
         processed_at: datetime | None = None,
+        record_type: str = "notes",
+        filename_suffix: str | None = None,
     ) -> StoredDocument:
-        existing = self.find_existing_learning_record(source_type="youtube_url", source_key=video_id)
+        existing = self.find_existing_learning_record(
+            source_type="youtube_url",
+            source_key=video_id,
+            record_type=record_type,
+        )
         if existing is not None:
             return StoredDocument(
                 learning_record_id=existing.id,
@@ -120,12 +128,13 @@ class OutputStore:
             title=title,
             video_id=video_id,
             processed_at=processed_timestamp,
+            filename_suffix=filename_suffix,
         )
         learning_record_id = self._upsert_learning_record(
             source_type="youtube_url",
             source_key=video_id,
             source_ref=source_url,
-            record_type="notes",
+            record_type=record_type,
             title=title,
             filename=filename,
             markdown=markdown,
@@ -139,6 +148,60 @@ class OutputStore:
             title=title,
             reused_existing=False,
         )
+
+    def save_transcript(
+        self,
+        *,
+        title: str,
+        video_id: str,
+        source_url: str,
+        transcript_text: str,
+        requested_by: str,
+        processed_at: datetime | None = None,
+    ) -> StoredDocument:
+        processed_timestamp = processed_at or datetime.now(timezone.utc)
+        filename = f"{processed_timestamp.strftime('%Y-%m-%d')}__{slugify(title)}__{video_id}.transcript.txt"
+        existing = self.find_existing_learning_record(
+            source_type="youtube_url",
+            source_key=video_id,
+            record_type="transcript",
+        )
+        if existing is not None:
+            return StoredDocument(
+                learning_record_id=existing.id,
+                filename=existing.filename,
+                markdown=existing.markdown,
+                title=existing.title,
+                reused_existing=True,
+            )
+        learning_record_id = self._upsert_learning_record(
+            source_type="youtube_url",
+            source_key=video_id,
+            source_ref=source_url,
+            record_type="transcript",
+            title=title,
+            filename=filename,
+            markdown=transcript_text,
+            requested_by=requested_by,
+            processed_at=processed_timestamp,
+        )
+        return StoredDocument(
+            learning_record_id=learning_record_id,
+            filename=filename,
+            markdown=transcript_text,
+            title=title,
+            reused_existing=False,
+        )
+
+    def find_transcript_text(self, video_id: str) -> str | None:
+        record = self.find_existing_learning_record(
+            source_type="youtube_url",
+            source_key=video_id,
+            record_type="transcript",
+        )
+        if record is None:
+            return None
+        return record.markdown
 
     def save_transcript_debug(
         self,

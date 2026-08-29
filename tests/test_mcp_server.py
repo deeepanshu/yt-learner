@@ -4,7 +4,7 @@ import asyncio
 
 from mcp import Client
 
-from app.mcp_server import load_youtube_transcript, mcp
+from app.mcp_server import _http_path, _http_port, load_youtube_transcript, mcp
 from app.transcript import TranscriptData, TranscriptSegment, TranscriptUnavailableError
 from app.youtube_urls import InvalidYouTubeUrl
 
@@ -16,6 +16,21 @@ def _transcript() -> TranscriptData:
             TranscriptSegment(start_seconds=12, text="second line"),
         ]
     )
+
+
+def test_http_settings_default_to_public_endpoint(monkeypatch) -> None:
+    monkeypatch.delenv("MCP_PATH", raising=False)
+    monkeypatch.delenv("MCP_PORT", raising=False)
+    assert _http_path() == "/mcp"
+    assert _http_port() == 3003
+
+
+def test_http_settings_use_deployment_environment(monkeypatch) -> None:
+    monkeypatch.setenv("MCP_PATH", "/yt/api/mcp")
+    monkeypatch.setenv("MCP_PORT", "3010")
+
+    assert _http_path() == "/yt/api/mcp"
+    assert _http_port() == 3010
 
 
 def test_load_youtube_transcript_from_url() -> None:

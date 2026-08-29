@@ -124,35 +124,39 @@ Use this only with local MCP hosts such as Claude Code or Cursor:
 make run-mcp
 ```
 
-### ChatGPT: Supabase OAuth-protected HTTP
+### ChatGPT: public Streamable HTTP
 
-ChatGPT needs a public HTTPS Streamable HTTP endpoint with OAuth 2.1. The `mcp` Compose service listens only on the Pi loopback interface; Cloudflare Tunnel is the only public ingress. Authentication is delegated to Supabase Auth's OAuth 2.1 server, the same provider family-os uses, so ChatGPT can register itself through dynamic client registration.
+ChatGPT connects directly to the public read-only MCP endpoint:
+
+```text
+https://ytlearner.deepanshujain.me/yt/api/mcp
+```
+
+No OAuth, Supabase account, or Family OS identity is involved. The `mcp` Compose service remains loopback-bound on the Pi; Cloudflare Tunnel is the only public ingress.
 
 Set these values in the production `.env`:
 
 ```text
-MCP_PUBLIC_URL=https://ytlearner.deepanshujain.me/yt/api/mcp
-SUPABASE_URL=https://<project-ref>.supabase.co
-# Optional. Set only when Supabase issues a stable audience claim for this resource.
-# Leave blank to accept valid tokens from this Supabase project.
-MCP_JWT_AUDIENCE=
 MCP_PATH=/yt/api/mcp
-# Optional. Required OAuth scopes, space-separated.
-MCP_REQUIRED_SCOPES=
+MCP_PORT=3003
 MCP_BIND_HOST=127.0.0.1
 MCP_HOST_PORT=3003
 ```
 
-Deploy the Compose stack, then:
+Before exposing the endpoint, add a Cloudflare WAF rate-limit rule for:
 
-1. Route `ytlearner.deepanshujain.me` through Cloudflare Tunnel to `http://127.0.0.1:3003`.
-2. In the Supabase dashboard, enable **Authentication → OAuth Server** and **dynamic client registration** (already on if family-os MCP is connected).
-3. Make sure no Cloudflare Access policy gates `ytlearner.deepanshujain.me`; the MCP endpoint must be publicly reachable so ChatGPT can complete OAuth discovery.
-4. In ChatGPT developer mode, add `https://ytlearner.deepanshujain.me/yt/api/mcp` as the custom MCP endpoint and approve access in the Supabase consent flow (the project consent page).
+```text
+Hostname: ytlearner.deepanshujain.me
+Path:     /yt/api/mcp*
+Limit:    30 requests per minute per client IP
+Action:   Block for 1 minute
+```
 
-The HTTP server validates every bearer token's signature, Supabase issuer, and expiry against the project JWKS before it dispatches a tool. Set `MCP_JWT_AUDIENCE` to validate a stable audience claim; leave it blank for Supabase OAuth resource tokens. The MCP SDK serves protected-resource metadata under `/.well-known/oauth-protected-resource/`; the app also respects `MCP_PATH` (default `/mcp`, set to `/yt/api/mcp` here).
+This prevents the public transcript endpoint becoming an abuseable YouTube proxy. The app itself does not handle user data or authentication.
 
-The same endpoint works with any remote MCP host that supports Streamable HTTP and OAuth discovery. ChatGPT custom MCP apps require a supported plan and developer mode.
+In ChatGPT developer mode, add the URL above as a custom MCP endpoint and select **No authentication**.
+
+The same endpoint works with any remote MCP host that supports Streamable HTTP without authentication.
 
 English transcripts only, same constraint as the Discord worker. Videos without captions, private/unavailable videos, or YouTube-blocked requests return a tool error.
 

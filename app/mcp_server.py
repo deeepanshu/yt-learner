@@ -1,17 +1,14 @@
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from mcp.server import MCPServer
-from mcp.server.auth.provider import TokenVerifier
-from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import AnyHttpUrl
 
-from app.mcp_auth import SupabaseMcpSettings, SupabaseTokenVerifier
 from app.transcript import TranscriptData, TranscriptError, TranscriptSegment, fetch_transcript
 from app.youtube_urls import InvalidYouTubeUrl, parse_youtube_url_or_id
 
@@ -40,17 +37,11 @@ def load_youtube_transcript(
     )
 
 
-def create_mcp_server(
-    *,
-    auth_settings: AuthSettings | None = None,
-    token_verifier: TokenVerifier | None = None,
-) -> MCPServer:
+def create_mcp_server() -> MCPServer:
     server = MCPServer(
         "yt-learner",
         version="0.1.0",
         instructions="Fetch English transcripts from YouTube videos.",
-        auth=auth_settings,
-        token_verifier=token_verifier,
     )
 
     @server.tool(
@@ -70,16 +61,22 @@ def create_mcp_server(
     return server
 
 
-def create_http_mcp(settings: SupabaseMcpSettings) -> MCPServer:
-    auth_settings = AuthSettings(
-        issuer_url=AnyHttpUrl(settings.issuer_url),
-        resource_server_url=AnyHttpUrl(settings.public_url),
-        required_scopes=settings.required_scopes,
-    )
-    return create_mcp_server(
-        auth_settings=auth_settings,
-        token_verifier=SupabaseTokenVerifier(settings),
-    )
+def _http_port() -> int:
+    raw = os.getenv("MCP_PORT", "3003")
+    try:
+        port = int(raw)
+    except ValueError as exc:
+        raise RuntimeError("Environment variable MCP_PORT must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise RuntimeError("Environment variable MCP_PORT must be between 1 and 65535")
+    return port
+
+
+def _http_path() -> str:
+    path = os.getenv("MCP_PATH", "/mcp").strip().rstrip("/")
+    if not path.startswith("/"):
+        raise RuntimeError("Environment variable MCP_PATH must start with /")
+    return path
 
 
 mcp = create_mcp_server()
@@ -90,8 +87,12 @@ def main() -> None:
 
 
 def http_main() -> None:
-    settings = SupabaseMcpSettings.from_environment()
-    create_http_mcp(settings).run(transport="streamable-http", host="0.0.0.0", port=settings.port, streamable_http_path=settings.path)
+    mcp.run(
+        transport="streamable-http",
+        host="0.0.0.0",
+        port=_http_port(),
+        streamable_http_path=_http_path(),
+    )
 
 
 if __name__ == "__main__":

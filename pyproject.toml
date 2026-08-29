@@ -9,12 +9,14 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.38.0",
     "opentelemetry-sdk>=1.38.0",
     "openai>=2.0.0",
+    "psycopg[binary]>=3.2.0",
     "python-dotenv>=1.0.0",
     "youtube-transcript-api>=0.6.2",
 ]
 
 [project.scripts]
 yt-learner-discord = "app.discord_bot:main"
+yt-learner-migrate = "app.migrate:main"
 yt-learner-scheduler = "app.scheduler_cli:main"
 yt-learner-scheduler-loop = "app.scheduler_loop:main"
 yt-learner-worker = "app.worker:main"
@@ -28,6 +30,9 @@ package = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"app/migrations" = "app/migrations"
 
 [dependency-groups]
 dev = [

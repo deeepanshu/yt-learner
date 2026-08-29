@@ -9,9 +9,17 @@ Discord-first MVP for turning YouTube URLs and watched YouTube channel uploads i
 3. Copy `.env.example` to `.env` and fill in the required values.
 4. In the Discord developer portal, enable the `MESSAGE CONTENT INTENT` for the bot if you want plain URL messages to work.
 5. Invite the bot to your server.
-6. Run the bot with `uv run yt-learner-discord`.
-7. Run the worker with `uv run yt-learner-worker`.
-8. Run the scheduler manually with `uv run yt-learner-scheduler` when you want a one-off poll during development.
+6. Run migrations with `uv run yt-learner-migrate`.
+7. Run the bot with `uv run yt-learner-discord`.
+8. Run the worker with `uv run yt-learner-worker`.
+9. Run the scheduler manually with `uv run yt-learner-scheduler` when you want a one-off poll during development.
+
+Local tests need Postgres:
+
+```bash
+make test-db
+make test
+```
 
 ## Docker Deployment
 
@@ -20,13 +28,11 @@ Docker Compose is the default deployment path.
 The deployed runtime keeps the current process split:
 
 - `discord`: accepts Discord messages and slash commands, validates input, and enqueues jobs
-- `worker`: claims queued jobs from SQLite, runs the extraction pipeline, and posts results back to Discord
+- `worker`: claims queued jobs from Postgres, runs the extraction pipeline, and posts results back to Discord
 - `scheduler`: waits until `8:00 AM` in `Asia/Bangkok`, runs one watched-channel poll, enqueues new jobs, and waits for the next day
+- `migrate`: one-shot schema apply (`docker compose --profile migrate run --rm migrate`)
 
-Persistent storage is mounted from the host:
-
-- `./data` stores the SQLite database
-- `./outputs` stores generated markdown artifacts
+Services join the external `homelab` and `observability` networks. Postgres is `homelab-postgres`. Notes live in Postgres, not on a bind mount.
 
 Standard Docker flow:
 
@@ -50,12 +56,28 @@ Useful operational commands:
 - `make docker-restart`
 - `make docker-ps`
 
+### Pi cutover from SQLite
+
+On an existing homelab Postgres volume, init scripts will not run again. Create the database once:
+
+```sh
+POSTGRES_SUPERUSER_PASSWORD=… ./scripts/create-app-db.sh yt_learner
+```
+
+Save the printed `DATABASE_URL` into `~/projects/yt-learner/.env`, then import the old SQLite file if you still have it:
+
+```sh
+uv run python scripts/import-sqlite.py ./data/yt_learner.sqlite3
+```
+
+Also set `RPI_DEPLOY_SECRET` on `deeepanshu/yt-learner` to match the Pi manager.
+
 ## Runtime Model
 
 The app still has two long-lived app processes and one scheduled process:
 
 - `yt-learner-discord`: accepts Discord messages and slash commands, validates input, and enqueues jobs
-- `yt-learner-worker`: claims queued jobs from SQLite, runs the extraction pipeline, and posts the result back to Discord
+- `yt-learner-worker`: claims queued jobs from Postgres, runs the extraction pipeline, and posts the result back to Discord
 - `yt-learner-scheduler`: runs channel discovery on a daily wall-clock schedule and enqueues new work
 
 In normal deployment all three containers should be running. If only the bot is running, jobs will queue but never complete. If only the worker is running, existing queued jobs will still process, but you will not be able to add or remove watches from Discord. If the scheduler is not running, watched channels will stop enqueueing new uploads.
@@ -73,12 +95,11 @@ Required values in `.env`:
 
 - `OPENAI_API_KEY`
 - `DISCORD_BOT_TOKEN`
+- `DATABASE_URL`
 
 Optional values:
 
 - `DISCORD_ALLOWED_USER_ID` (legacy; not required for server-wide access)
-- `DISCORD_OUTPUT_DIR`
-- `YOUTUBE_LEARNER_DB_PATH`
 - `OPENAI_MODEL`
 - `DISCORD_ALLOWED_CHANNEL_ID`
 - `YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS`
@@ -88,6 +109,8 @@ Optional values:
 - `YT_LEARNER_SCHEDULER_TIMEZONE`
 - `YT_LEARNER_SCHEDULER_HOUR`
 - `YT_LEARNER_SCHEDULER_MINUTE`
+
+Compose pins OTEL to `http://otel-collector:4318`. Do not use `localhost` from inside the app containers.
 
 ## Watched Channels
 
@@ -101,7 +124,7 @@ Behavior:
 
 - the first sync for a newly watched YouTube channel is bootstrap-only and does not backfill existing uploads
 - later uploads are discovered from the YouTube channel feed and enqueued once
-- discovered video ids are stored in SQLite, so restarts do not re-enqueue the same upload
+- discovered video ids are stored in Postgres, so restarts do not re-enqueue the same upload
 - each watched YouTube channel has its own Discord destination, and multiple watched channels may share the same destination
 
 The scheduler container runs discovery once per day at `8:00 AM` Bangkok time. It only enqueues jobs; `yt-learner-worker` still needs to be running to process them.
@@ -114,103 +137,50 @@ Supported watch inputs:
 
 ## Observability
 
-`yt-learner` can export metrics and logs to any OpenTelemetry-compatible collector. If you want Loki, the recommended shape is:
+`yt-learner` exports metrics and logs over OTLP. The collector forwards logs to Loki and metrics to Prometheus.
 
-- `yt-learner-discord` and `yt-learner-worker` emit OTLP metrics and OTLP logs
-- an OpenTelemetry Collector or Grafana Alloy receives those signals
-- the collector forwards logs to Loki and metrics to the backend you prefer
-
-Recommended entries in `/home/deepanshu/.env`:
-
-```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
-OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4318/v1/logs
-OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod
-```
-
-When running inside Docker, connect the app services to the shared external `observability` Docker network and address the collector by container DNS name such as `otel-collector:4318`. Do not use `localhost:4318` from inside the app containers unless the collector is running in the same container.
-
-Service names are set automatically:
+Service names:
 
 - `yt-learner-discord`
 - `yt-learner-scheduler`
 - `yt-learner-worker`
 
-Metric names:
+Metric names (Prometheus adds the collector `app_` prefix):
 
 - `yt_learner_discord_jobs_enqueued_total`
 - `yt_learner_worker_jobs_processed_total`
 - `yt_learner_worker_job_processing_duration_seconds`
+- `yt_learner_scheduler_runs_total`
+- `yt_learner_scheduler_run_duration_seconds`
+- `yt_learner_scheduler_videos_seen_total`
+- `yt_learner_scheduler_jobs_enqueued_total`
 
-The bot exports job enqueue counts. The worker exports job completion/failure counts and processing duration.
-
-Logging behavior:
-
-- when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, both services continue writing normal process logs and also export them over OTLP
-- `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is optional and only needed when your collector exposes logs on a different URL than the shared OTLP endpoint
-- OpenTelemetry resource attributes such as `deployment.environment=prod` are attached to both logs and metrics, which makes them usable as Loki labels after collector-side mapping
-
-The application intentionally does not talk to Loki directly. OTLP keeps the app backend-agnostic and lets the collector handle Loki-specific routing, relabeling, and buffering.
+The dashboard `grafana/dashboards/yt-learner.json` is copied into Grafana on deploy.
 
 ## Development
 
-- Run tests with `uv run pytest`.
+- Run tests with `make test`.
 - Add dependencies with `uv add <package>`.
 - Add dev dependencies with `uv add --dev <package>`.
 - Validate config locally with `make check`.
 - Run both bot and worker locally with `make run-all`.
-- Run the bot locally with `make run-bot`.
-- Run the worker locally with `make run-worker`.
-- Run one scheduler pass locally with `make run-scheduler`.
+- Apply migrations with `uv run yt-learner-migrate`.
 - Build the Docker image with `make docker-build`.
 - Start the Docker deployment with `make docker-up`.
-
-## Cleanup Existing Host Services
-
-If you previously deployed this repo with `systemd` and host cron, clean up the old host-managed runtime before switching fully to Docker Compose:
-
-1. Stop and disable the old systemd units:
-
-```bash
-sudo systemctl stop yt-learner-discord yt-learner-worker
-sudo systemctl disable yt-learner-discord yt-learner-worker
-```
-
-2. Remove the old unit files if you installed them from this repo:
-
-```bash
-sudo rm -f /etc/systemd/system/yt-learner-discord.service
-sudo rm -f /etc/systemd/system/yt-learner-worker.service
-sudo systemctl daemon-reload
-```
-
-3. Remove the old scheduler cron entry:
-
-```bash
-(crontab -l 2>/dev/null || true) | grep -F -v "yt-learner-scheduler" | crontab -
-```
-
-4. Start the Docker deployment:
-
-```bash
-make docker-build
-make docker-up
-```
 
 ## Current Scope
 
 - Manual YouTube URL processing through Discord messages or `/learn`
 - Watched YouTube channel scheduling through `/watch`
-- SQLite-backed durable job queue in `app.job_queue`
-- SQLite-backed watch and discovered-video persistence
+- Postgres-backed durable job queue in `app.job_queue`
+- Postgres-backed watch, source, and note persistence
 - Separate worker execution in `app.worker`
 - Shared processing pipeline in `app.pipeline`
-- Local markdown output in `outputs/`
+- Notes stored as `learning_records.markdown` and sent to Discord as attachments
 
 ## Notes
 
-- Existing markdown files are reused by video ID.
-- If transcript fetch succeeds but OpenAI extraction fails, the transcript is saved locally as a debug artifact.
+- Existing notes are reused by video ID.
+- If transcript fetch succeeds but OpenAI extraction fails, the transcript is stored in `debug_artifacts`.
 - Discord replies immediately with a queued job ID for manual requests; the worker posts the completion or failure message later.
 - Channel watches use public YouTube feeds in v1 and do not require a YouTube Data API key.

@@ -418,7 +418,7 @@ class LearnerBot(discord.Client):
 
 
 def build_processor(settings: Settings) -> VideoProcessor:
-    store = OutputStore(settings.discord_output_dir, settings.db_path)
+    store = OutputStore(settings.database_url)
     extractor = LearningExtractor(
         api_key=settings.openai_api_key,
         model=settings.openai_model,
@@ -428,8 +428,8 @@ def build_processor(settings: Settings) -> VideoProcessor:
 
 
 def build_bot(settings: Settings, telemetry=None) -> LearnerBot:
-    queue = JobQueue(settings.db_path)
-    watch_repository = WatchRepository(settings.db_path)
+    queue = JobQueue(settings.database_url)
+    watch_repository = WatchRepository(settings.database_url)
     return LearnerBot(settings=settings, queue=queue, watch_repository=watch_repository, telemetry=telemetry)
 
 

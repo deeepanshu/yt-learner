@@ -1,11 +1,16 @@
-.PHONY: sync test check run-bot run-worker run-scheduler run-all \
+.PHONY: sync test test-db check run-bot run-worker run-scheduler run-all \
 	docker-build docker-up docker-down docker-restart docker-logs docker-ps docker-run-scheduler
+
+TEST_DATABASE_URL ?= postgres://yt_learner:yt_learner@127.0.0.1:55432/yt_learner_test
 
 sync:
 	uv sync
 
-test:
-	uv run pytest
+test-db:
+	docker compose -f docker-compose.test.yml up -d --wait
+
+test: test-db
+	TEST_DATABASE_URL=$(TEST_DATABASE_URL) uv run pytest
 
 check:
 	uv run yt-learner-discord --check-config
@@ -26,12 +31,14 @@ docker-build:
 	docker compose build discord
 
 docker-up:
+	docker compose --profile migrate run --rm migrate
 	docker compose up -d --build
 
 docker-down:
 	docker compose down
 
 docker-restart:
+	docker compose --profile migrate run --rm migrate
 	docker compose up -d --build --force-recreate
 
 docker-logs:

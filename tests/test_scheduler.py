@@ -18,10 +18,10 @@ class FakeFeedFetcher:
         return channel_id, list(self.videos_by_channel.get(channel_id, []))
 
 
-def test_bootstrap_records_existing_feed_without_queueing(tmp_path) -> None:
-    repository = WatchRepository(tmp_path / "data" / "yt_learner.sqlite3")
-    queue = JobQueue(tmp_path / "data" / "yt_learner.sqlite3")
-    store = OutputStore(tmp_path / "outputs", tmp_path / "data" / "yt_learner.sqlite3")
+def test_bootstrap_records_existing_feed_without_queueing(database_url) -> None:
+    repository = WatchRepository(database_url)
+    queue = JobQueue(database_url)
+    store = OutputStore(database_url)
     subscription = repository.add_or_update_subscription(
         guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
@@ -54,10 +54,10 @@ def test_bootstrap_records_existing_feed_without_queueing(tmp_path) -> None:
     assert repository.get_active_subscriptions()[0].bootstrap_completed_at is not None
 
 
-def test_new_video_after_bootstrap_is_queued_once(tmp_path) -> None:
-    repository = WatchRepository(tmp_path / "data" / "yt_learner.sqlite3")
-    queue = JobQueue(tmp_path / "data" / "yt_learner.sqlite3")
-    store = OutputStore(tmp_path / "outputs", tmp_path / "data" / "yt_learner.sqlite3")
+def test_new_video_after_bootstrap_is_queued_once(database_url) -> None:
+    repository = WatchRepository(database_url)
+    queue = JobQueue(database_url)
+    store = OutputStore(database_url)
     subscription = repository.add_or_update_subscription(
         guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
@@ -106,10 +106,10 @@ def test_new_video_after_bootstrap_is_queued_once(tmp_path) -> None:
     assert discovered[-1].queued_job_id == claimed.id
 
 
-def test_existing_learning_record_is_not_requeued(tmp_path) -> None:
-    repository = WatchRepository(tmp_path / "data" / "yt_learner.sqlite3")
-    queue = JobQueue(tmp_path / "data" / "yt_learner.sqlite3")
-    store = OutputStore(tmp_path / "outputs", tmp_path / "data" / "yt_learner.sqlite3")
+def test_existing_learning_record_is_not_requeued(database_url) -> None:
+    repository = WatchRepository(database_url)
+    queue = JobQueue(database_url)
+    store = OutputStore(database_url)
     subscription = repository.add_or_update_subscription(
         guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",

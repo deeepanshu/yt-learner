@@ -1,8 +1,8 @@
 from app.channel_watches import WatchRepository
 
 
-def test_add_list_and_deactivate_subscription(tmp_path) -> None:
-    repository = WatchRepository(tmp_path / "data" / "yt_learner.sqlite3")
+def test_add_list_and_deactivate_subscription(database_url) -> None:
+    repository = WatchRepository(database_url)
 
     first = repository.add_or_update_subscription(
         guild_id="guild-1",
@@ -29,8 +29,8 @@ def test_add_list_and_deactivate_subscription(tmp_path) -> None:
     assert [subscription.id for subscription in active] == [second.id]
 
 
-def test_reactivate_existing_subscription_updates_route(tmp_path) -> None:
-    repository = WatchRepository(tmp_path / "data" / "yt_learner.sqlite3")
+def test_reactivate_existing_subscription_updates_route(database_url) -> None:
+    repository = WatchRepository(database_url)
 
     original = repository.add_or_update_subscription(
         guild_id="guild-1",
@@ -57,8 +57,8 @@ def test_reactivate_existing_subscription_updates_route(tmp_path) -> None:
     assert updated.is_active is True
 
 
-def test_record_discovered_video_is_idempotent(tmp_path) -> None:
-    repository = WatchRepository(tmp_path / "data" / "yt_learner.sqlite3")
+def test_record_discovered_video_is_idempotent(database_url) -> None:
+    repository = WatchRepository(database_url)
     subscription = repository.add_or_update_subscription(
         guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",

@@ -71,12 +71,27 @@ class NoopTelemetry:
     ) -> None:
         return None
 
+    def record_scheduler_run(
+        self,
+        *,
+        status: str,
+        duration_seconds: float,
+        subscriptions_polled: int = 0,
+        videos_seen: int = 0,
+        jobs_enqueued: int = 0,
+    ) -> None:
+        return None
+
 
 @dataclass
 class OTelTelemetry:
     jobs_enqueued: object
     jobs_processed: object
     processing_duration: object
+    scheduler_runs: object
+    scheduler_duration: object
+    scheduler_videos_seen: object
+    scheduler_jobs_enqueued: object
 
     def record_job_enqueued(self, *, source: str) -> None:
         self.jobs_enqueued.add(1, {"source": source})
@@ -100,6 +115,23 @@ class OTelTelemetry:
             attributes["error_type"] = error_type
         self.jobs_processed.add(1, attributes)
         self.processing_duration.record(duration_seconds, attributes)
+
+    def record_scheduler_run(
+        self,
+        *,
+        status: str,
+        duration_seconds: float,
+        subscriptions_polled: int = 0,
+        videos_seen: int = 0,
+        jobs_enqueued: int = 0,
+    ) -> None:
+        attributes = {"status": status}
+        self.scheduler_runs.add(1, attributes)
+        self.scheduler_duration.record(duration_seconds, attributes)
+        if videos_seen:
+            self.scheduler_videos_seen.add(videos_seen, attributes)
+        if jobs_enqueued:
+            self.scheduler_jobs_enqueued.add(jobs_enqueued, attributes)
 
 
 def _meter_name_for(service_name: str) -> str:
@@ -175,5 +207,25 @@ def configure_telemetry(service_name: str) -> NoopTelemetry | OTelTelemetry:
             "yt_learner_worker_job_processing_duration_seconds",
             description="End-to-end worker processing duration per job",
             unit="s",
+        ),
+        scheduler_runs=meter.create_counter(
+            "yt_learner_scheduler_runs_total",
+            description="Number of yt-learner scheduler poll passes",
+            unit="1",
+        ),
+        scheduler_duration=meter.create_histogram(
+            "yt_learner_scheduler_run_duration_seconds",
+            description="Wall time of one scheduler poll pass",
+            unit="s",
+        ),
+        scheduler_videos_seen=meter.create_counter(
+            "yt_learner_scheduler_videos_seen_total",
+            description="Videos discovered by the scheduler",
+            unit="1",
+        ),
+        scheduler_jobs_enqueued=meter.create_counter(
+            "yt_learner_scheduler_jobs_enqueued_total",
+            description="Jobs enqueued by the scheduler",
+            unit="1",
         ),
     )

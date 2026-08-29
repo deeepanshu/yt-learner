@@ -6,7 +6,6 @@ from app.channel_watches import WatchRepository
 from app.config import Settings
 from app.job_queue import JobQueue
 from app.pipeline import ProcessedVideo
-from app.storage import OutputStore
 from app.worker import WorkerService
 
 
@@ -37,16 +36,9 @@ class FakeDiscordClient:
         return self.channel
 
 
-def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
-    db_path = tmp_path / "data" / "yt_learner.sqlite3"
-    output_root = tmp_path / "outputs"
-    result_path = output_root / "result.md"
-    result_path.parent.mkdir(parents=True, exist_ok=True)
-    result_path.write_text("# Learned", encoding="utf-8")
-
-    repository = WatchRepository(db_path)
-    queue = JobQueue(db_path)
-    store = OutputStore(output_root, db_path)
+def test_worker_marks_scheduled_video_as_indexed(database_url) -> None:
+    repository = WatchRepository(database_url)
+    queue = JobQueue(database_url)
     subscription = repository.add_or_update_subscription(
         guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
@@ -80,7 +72,8 @@ def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
             video_id="abc123xyz",
             title="Demo",
             url=job.video_url,
-            output_path=result_path,
+            filename="result.md",
+            markdown="# Learned",
             reused_existing=False,
         )
     )
@@ -89,9 +82,8 @@ def test_worker_marks_scheduled_video_as_indexed(tmp_path) -> None:
         settings=Settings(
             openai_api_key="key",
             discord_bot_token="token",
+            database_url=database_url,
             discord_allowed_user_id=None,
-            discord_output_dir=output_root,
-            db_path=db_path,
         ),
         queue=queue,
         processor=processor,

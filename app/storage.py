@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+
+from app.db import as_datetime, connect
 
 
 def slugify(value: str, *, fallback: str = "video") -> str:
@@ -15,7 +15,8 @@ def slugify(value: str, *, fallback: str = "video") -> str:
 @dataclass(frozen=True)
 class StoredDocument:
     learning_record_id: int
-    path: Path
+    filename: str
+    markdown: str
     title: str
     reused_existing: bool
 
@@ -29,27 +30,27 @@ class LearningRecord:
     source_ref: str
     record_type: str
     title: str
-    artifact_path: Path
+    filename: str
+    markdown: str
     requested_by: str | None
     created_at: datetime
     updated_at: datetime
 
 
-def _serialize_timestamp(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat()
-
-
-def _parse_timestamp(value: str) -> datetime:
-    return datetime.fromisoformat(value)
+@dataclass(frozen=True)
+class DebugArtifact:
+    id: int
+    source_type: str
+    source_key: str
+    artifact_type: str
+    filename: str
+    body: str
+    created_at: datetime
 
 
 class OutputStore:
-    def __init__(self, root: Path, db_path: Path) -> None:
-        self.root = root
-        self.db_path = db_path
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
 
     def find_existing_learning_record(
         self,
@@ -58,7 +59,7 @@ class OutputStore:
         source_key: str,
         record_type: str = "notes",
     ) -> LearningRecord | None:
-        with self._connect() as conn:
+        with connect(self.database_url) as conn:
             row = conn.execute(
                 """
                 SELECT
@@ -69,57 +70,30 @@ class OutputStore:
                     s.source_ref,
                     lr.record_type,
                     lr.title,
-                    lr.artifact_path,
+                    lr.filename,
+                    lr.markdown,
                     lr.requested_by,
                     lr.created_at,
                     lr.updated_at
                 FROM learning_records AS lr
                 JOIN sources AS s ON s.id = lr.source_id
-                WHERE s.source_type = ? AND s.source_key = ? AND lr.record_type = ?
+                WHERE s.source_type = %s AND s.source_key = %s AND lr.record_type = %s
                 """,
                 (source_type, source_key, record_type),
             ).fetchone()
-
-        if row is not None:
-            record = self._row_to_learning_record(row)
-            if record.artifact_path.exists():
-                return record
-
-        if source_type == "youtube_url":
-            legacy_path = self._find_legacy_markdown(source_key)
-            if legacy_path is None:
-                return None
-            return self._import_legacy_youtube_record(source_key=source_key, artifact_path=legacy_path)
-
-        return None
-
-    def find_existing(self, video_id: str) -> Path | None:
-        record = self.find_existing_learning_record(source_type="youtube_url", source_key=video_id)
-        if record is None:
+        if row is None:
             return None
-        return record.artifact_path
+        return self._row_to_learning_record(row)
 
-    def read_markdown_title(self, path: Path) -> str | None:
-        try:
-            with path.open(encoding="utf-8") as handle:
-                first_line = handle.readline().strip()
-        except OSError:
-            return None
-
-        if first_line.startswith("# "):
-            return first_line[2:].strip() or None
-        return None
-
-    def build_output_path(
+    def build_output_filename(
         self,
         *,
         title: str,
         video_id: str,
         processed_at: datetime | None = None,
-    ) -> Path:
+    ) -> str:
         timestamp = (processed_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
-        filename = f"{timestamp}__{slugify(title)}__{video_id}.md"
-        return self.root / filename
+        return f"{timestamp}__{slugify(title)}__{video_id}.md"
 
     def save_markdown(
         self,
@@ -135,31 +109,33 @@ class OutputStore:
         if existing is not None:
             return StoredDocument(
                 learning_record_id=existing.id,
-                path=existing.artifact_path,
+                filename=existing.filename,
+                markdown=existing.markdown,
                 title=existing.title,
                 reused_existing=True,
             )
 
         processed_timestamp = processed_at or datetime.now(timezone.utc)
-        output_path = self.build_output_path(
+        filename = self.build_output_filename(
             title=title,
             video_id=video_id,
             processed_at=processed_timestamp,
         )
-        output_path.write_text(markdown, encoding="utf-8")
         learning_record_id = self._upsert_learning_record(
             source_type="youtube_url",
             source_key=video_id,
             source_ref=source_url,
             record_type="notes",
             title=title,
-            artifact_path=output_path,
+            filename=filename,
+            markdown=markdown,
             requested_by=requested_by,
             processed_at=processed_timestamp,
         )
         return StoredDocument(
             learning_record_id=learning_record_id,
-            path=output_path,
+            filename=filename,
+            markdown=markdown,
             title=title,
             reused_existing=False,
         )
@@ -171,52 +147,50 @@ class OutputStore:
         video_id: str,
         transcript_text: str,
         processed_at: datetime | None = None,
-    ) -> Path:
-        timestamp = (processed_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
-        filename = f"{timestamp}__{slugify(title)}__{video_id}.transcript.txt"
-        output_path = self.root / filename
-        output_path.write_text(transcript_text, encoding="utf-8")
-        return output_path
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _initialize(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
+    ) -> DebugArtifact:
+        timestamp = processed_at or datetime.now(timezone.utc)
+        filename = f"{timestamp.strftime('%Y-%m-%d')}__{slugify(title)}__{video_id}.transcript.txt"
+        with connect(self.database_url) as conn:
+            row = conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS sources (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_type TEXT NOT NULL,
-                    source_key TEXT NOT NULL,
-                    source_ref TEXT NOT NULL,
-                    title TEXT,
-                    created_at TEXT NOT NULL,
-                    UNIQUE(source_type, source_key)
+                INSERT INTO debug_artifacts (
+                    source_type,
+                    source_key,
+                    artifact_type,
+                    filename,
+                    body,
+                    created_at
                 )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                ("youtube_url", video_id, "transcript", filename, transcript_text, timestamp),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Unable to save debug artifact")
+        return self._row_to_debug_artifact(row)
+
+    def get_latest_debug_artifact(
+        self,
+        *,
+        source_type: str,
+        source_key: str,
+        artifact_type: str = "transcript",
+    ) -> DebugArtifact | None:
+        with connect(self.database_url) as conn:
+            row = conn.execute(
                 """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS learning_records (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_id INTEGER NOT NULL,
-                    record_type TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    artifact_path TEXT NOT NULL,
-                    requested_by TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(source_id, record_type),
-                    FOREIGN KEY(source_id) REFERENCES sources(id)
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_sources_type_key ON sources(source_type, source_key)"
-            )
+                SELECT *
+                FROM debug_artifacts
+                WHERE source_type = %s AND source_key = %s AND artifact_type = %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (source_type, source_key, artifact_type),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._row_to_debug_artifact(row)
 
     def _upsert_learning_record(
         self,
@@ -226,24 +200,26 @@ class OutputStore:
         source_ref: str,
         record_type: str,
         title: str,
-        artifact_path: Path,
+        filename: str,
+        markdown: str,
         requested_by: str,
         processed_at: datetime,
     ) -> int:
-        timestamp = _serialize_timestamp(processed_at)
-        with self._connect() as conn:
+        with connect(self.database_url) as conn:
             source_row = conn.execute(
                 """
                 INSERT INTO sources (source_type, source_key, source_ref, title, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(source_type, source_key)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (source_type, source_key)
                 DO UPDATE SET
                     source_ref = excluded.source_ref,
                     title = excluded.title
                 RETURNING id
                 """,
-                (source_type, source_key, source_ref, title, timestamp),
+                (source_type, source_key, source_ref, title, processed_at),
             ).fetchone()
+            if source_row is None:
+                raise RuntimeError("Unable to upsert source")
             source_id = int(source_row["id"])
             record_row = conn.execute(
                 """
@@ -251,16 +227,18 @@ class OutputStore:
                     source_id,
                     record_type,
                     title,
-                    artifact_path,
+                    filename,
+                    markdown,
                     requested_by,
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(source_id, record_type)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (source_id, record_type)
                 DO UPDATE SET
                     title = excluded.title,
-                    artifact_path = excluded.artifact_path,
+                    filename = excluded.filename,
+                    markdown = excluded.markdown,
                     requested_by = excluded.requested_by,
                     updated_at = excluded.updated_at
                 RETURNING id
@@ -269,56 +247,19 @@ class OutputStore:
                     source_id,
                     record_type,
                     title,
-                    str(artifact_path),
+                    filename,
+                    markdown,
                     requested_by,
-                    timestamp,
-                    timestamp,
+                    processed_at,
+                    processed_at,
                 ),
             ).fetchone()
+        if record_row is None:
+            raise RuntimeError("Unable to upsert learning record")
         return int(record_row["id"])
 
-    def _find_legacy_markdown(self, video_id: str) -> Path | None:
-        matches = sorted(self.root.glob(f"*__{video_id}.md"))
-        return matches[0] if matches else None
-
-    def _import_legacy_youtube_record(self, *, source_key: str, artifact_path: Path) -> LearningRecord | None:
-        title = self.read_markdown_title(artifact_path) or artifact_path.stem
-        record_id = self._upsert_learning_record(
-            source_type="youtube_url",
-            source_key=source_key,
-            source_ref=f"https://www.youtube.com/watch?v={source_key}",
-            record_type="notes",
-            title=title,
-            artifact_path=artifact_path,
-            requested_by="legacy-import",
-            processed_at=datetime.now(timezone.utc),
-        )
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT
-                    lr.id,
-                    lr.source_id,
-                    s.source_type,
-                    s.source_key,
-                    s.source_ref,
-                    lr.record_type,
-                    lr.title,
-                    lr.artifact_path,
-                    lr.requested_by,
-                    lr.created_at,
-                    lr.updated_at
-                FROM learning_records AS lr
-                JOIN sources AS s ON s.id = lr.source_id
-                WHERE lr.id = ?
-                """,
-                (record_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_learning_record(row)
-
-    def _row_to_learning_record(self, row: sqlite3.Row) -> LearningRecord:
+    def _row_to_learning_record(self, row: dict[str, object]) -> LearningRecord:
+        requested_by = row["requested_by"]
         return LearningRecord(
             id=int(row["id"]),
             source_id=int(row["source_id"]),
@@ -327,8 +268,20 @@ class OutputStore:
             source_ref=str(row["source_ref"]),
             record_type=str(row["record_type"]),
             title=str(row["title"]),
-            artifact_path=Path(str(row["artifact_path"])),
-            requested_by=row["requested_by"],
-            created_at=_parse_timestamp(str(row["created_at"])),
-            updated_at=_parse_timestamp(str(row["updated_at"])),
+            filename=str(row["filename"]),
+            markdown=str(row["markdown"]),
+            requested_by=str(requested_by) if requested_by is not None else None,
+            created_at=as_datetime(row["created_at"]) or datetime.now(timezone.utc),
+            updated_at=as_datetime(row["updated_at"]) or datetime.now(timezone.utc),
+        )
+
+    def _row_to_debug_artifact(self, row: dict[str, object]) -> DebugArtifact:
+        return DebugArtifact(
+            id=int(row["id"]),
+            source_type=str(row["source_type"]),
+            source_key=str(row["source_key"]),
+            artifact_type=str(row["artifact_type"]),
+            filename=str(row["filename"]),
+            body=str(row["body"]),
+            created_at=as_datetime(row["created_at"]) or datetime.now(timezone.utc),
         )

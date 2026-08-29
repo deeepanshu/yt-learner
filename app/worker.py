@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import time
+from io import BytesIO
 
 import discord
 
@@ -77,7 +78,7 @@ class WorkerService:
         done_job = self.queue.mark_done(
             job.id,
             learning_record_id=result.learning_record_id,
-            result_path=str(result.output_path),
+            result_filename=result.filename,
         )
         if self.watch_repository is not None:
             self.watch_repository.mark_video_indexed_by_job(
@@ -91,12 +92,12 @@ class WorkerService:
             reused_existing=result.reused_existing,
         )
         LOGGER.info(
-            "worker_job_done job_id=%s source=%s learning_record_id=%s reused_existing=%s output_path=%s duration_seconds=%.3f",
+            "worker_job_done job_id=%s source=%s learning_record_id=%s reused_existing=%s filename=%s duration_seconds=%.3f",
             job.id,
             job.source,
             result.learning_record_id,
             result.reused_existing,
-            result.output_path,
+            result.filename,
             time.perf_counter() - started,
         )
         await self._safe_notify_success(done_job, result)
@@ -116,15 +117,15 @@ class WorkerService:
             return
         prefix = "Reused existing notes" if result.reused_existing else "Done"
         LOGGER.info(
-            "worker_success_notification_started job_id=%s attachment_path=%s channel_type=%s",
+            "worker_success_notification_started job_id=%s filename=%s channel_type=%s",
             job.id,
-            result.output_path,
+            result.filename,
             type(channel).__name__,
         )
         reference = self._notification_reference(job, channel)
         await channel.send(
             content=f"{prefix} for job #{job.id}: {result.title}",
-            file=discord.File(result.output_path),
+            file=discord.File(BytesIO(result.markdown.encode("utf-8")), filename=result.filename),
             reference=reference,
             mention_author=False,
         )
@@ -214,9 +215,9 @@ def main() -> int:
     args = parse_args()
     configure_logging("yt-learner-worker")
     settings = load_settings()
-    queue = JobQueue(settings.db_path)
+    queue = JobQueue(settings.database_url)
     processor = build_processor(settings)
-    watch_repository = WatchRepository(settings.db_path)
+    watch_repository = WatchRepository(settings.database_url)
 
     if args.run_once:
         client = discord.Client(intents=discord.Intents.none())

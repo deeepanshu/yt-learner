@@ -8,26 +8,26 @@ This file is the working guide for coding agents making changes in this reposito
 
 `yt-learner` is a Discord-first MVP that turns a YouTube URL into structured markdown learning notes.
 
-The runtime is split into two long-lived processes:
+The runtime is split into two long-lived processes and one scheduled process:
 
 - `yt-learner-discord` receives Discord messages and slash commands, validates requests, and enqueues jobs.
-- `yt-learner-worker` claims queued jobs from SQLite, runs the extraction pipeline, and posts results back to Discord.
+- `yt-learner-worker` claims queued jobs from Postgres, runs the extraction pipeline, and posts results back to Discord.
+- `yt-learner-scheduler` polls watched YouTube channels on a wall-clock schedule.
 
-Normal behavior depends on both processes running. If only the Discord bot is running, jobs will enqueue but not complete.
+Normal behavior depends on bot and worker running. If only the Discord bot is running, jobs will enqueue but not complete.
 
 ## Repo Map
 
 - `app/` contains the application code.
 - `app/discord_bot.py` is the Discord entrypoint.
 - `app/worker.py` is the worker entrypoint.
-- `app/job_queue.py` contains the SQLite-backed queue.
+- `app/job_queue.py` contains the Postgres-backed queue.
+- `app/db.py` and `app/migrations/` contain connection helpers and SQL migrations.
 - `app/pipeline.py` contains the shared processing pipeline.
-- `app/storage.py`, `app/transcript.py`, `app/extractor.py`, and related modules support persistence and extraction.
+- `app/storage.py` stores sources, notes, and debug transcripts in Postgres.
 - `tests/` contains pytest coverage for the current behavior.
 - `docs/adr/` contains architectural decisions.
-- `scripts/service.sh` wraps `systemd` operations used by the Makefile.
-- `outputs/` stores generated markdown artifacts.
-- `data/` contains local runtime data such as the database path when configured that way.
+- `grafana/dashboards/` contains the app-owned Grafana dashboard.
 
 ## Common Commands
 
@@ -37,10 +37,9 @@ Setup and dependency sync:
 uv sync
 ```
 
-Run tests:
+Run tests (starts local Postgres on port 55432):
 
 ```bash
-uv run pytest
 make test
 ```
 
@@ -62,7 +61,13 @@ Run one scheduler pass locally:
 make run-scheduler
 ```
 
-Run both processes locally:
+Apply migrations:
+
+```bash
+uv run yt-learner-migrate
+```
+
+Run both bot and worker locally:
 
 ```bash
 make run-all
@@ -74,17 +79,12 @@ Check service configuration:
 make check
 ```
 
-Manage services:
+Docker:
 
 ```bash
-make service-install
-make service-restart
-make service-status
-make service-logs
-make service-stop
+make docker-up
+make docker-logs
 ```
-
-Service-specific targets are also available for `bot`, `worker`, and `scheduler`.
 
 ## Environment
 
@@ -94,13 +94,12 @@ Required values:
 
 - `OPENAI_API_KEY`
 - `DISCORD_BOT_TOKEN`
+- `DATABASE_URL`
 
 Common optional values:
 
 - `DISCORD_ALLOWED_CHANNEL_ID`
 - `DISCORD_ALLOWED_USER_ID`
-- `DISCORD_OUTPUT_DIR`
-- `YOUTUBE_LEARNER_DB_PATH`
 - `OPENAI_MODEL`
 - `YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS`
 - `OTEL_EXPORTER_OTLP_ENDPOINT`
@@ -109,13 +108,13 @@ Common optional values:
 
 ## Working Rules for Agents
 
-- Keep edits targeted and consistent with the current two-process architecture.
+- Keep edits targeted and consistent with the current two-process architecture plus scheduler.
 - Prefer extending existing modules over introducing duplicate abstractions.
 - Treat the bot, queue, worker, and pipeline boundaries as intentional unless the task explicitly changes them.
-- Add or update tests when behavior changes.
+- Postgres is the only application database. Do not reintroduce SQLite.
+- Notes live in `learning_records.markdown`, not on disk.
+- Add or update tests when behavior changes. Tests require Postgres (`make test`).
 - Keep setup and run instructions aligned with `README.md`, `Makefile`, and `pyproject.toml`.
-- Avoid changing `systemd` unit files or service scripts unless the task is specifically about deployment or operations.
-- Preserve local artifact behavior unless the task requires a storage or output-format change.
 
 ## Change Expectations
 

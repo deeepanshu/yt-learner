@@ -124,7 +124,7 @@ Common optional values:
 ## Working Rules for Agents
 
 - Keep edits targeted and consistent with the current two-process architecture plus scheduler.
-- Keep the Cloudflare Tunnel as the only remote ingress: validate bearer JWT signature, Supabase issuer, audience, and expiry in the MCP server; never expose an unauthenticated transcript proxy.
+- Keep the Cloudflare Tunnel as the only remote ingress: validate bearer JWT signature, Supabase issuer, and expiry in the MCP server; validate audience only when the deployed OAuth flow issues a stable resource audience. Never expose an unauthenticated transcript proxy.
 - Prefer extending existing modules over introducing duplicate abstractions.
 - Treat the bot, queue, worker, and pipeline boundaries as intentional unless the task explicitly changes them.
 - Postgres is the only application database. Do not reintroduce SQLite.

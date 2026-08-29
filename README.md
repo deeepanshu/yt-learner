@@ -133,8 +133,9 @@ Set these values in the production `.env`:
 ```text
 MCP_PUBLIC_URL=https://ytlearner.deepanshujain.me/yt/api/mcp
 SUPABASE_URL=https://<project-ref>.supabase.co
-# Supabase OAuth access tokens carry aud=authenticated; only change if you use a custom access token hook.
-MCP_JWT_AUDIENCE=authenticated
+# Optional. Set only when Supabase issues a stable audience claim for this resource.
+# Leave blank to accept valid tokens from this Supabase project.
+MCP_JWT_AUDIENCE=
 MCP_PATH=/yt/api/mcp
 # Optional. Required OAuth scopes, space-separated.
 MCP_REQUIRED_SCOPES=
@@ -149,7 +150,7 @@ Deploy the Compose stack, then:
 3. Make sure no Cloudflare Access policy gates `ytlearner.deepanshujain.me`; the MCP endpoint must be publicly reachable so ChatGPT can complete OAuth discovery.
 4. In ChatGPT developer mode, add `https://ytlearner.deepanshujain.me/yt/api/mcp` as the custom MCP endpoint and approve access in the Supabase consent flow (the project consent page).
 
-The HTTP server validates every bearer token's signature, Supabase issuer, audience, and expiry against the project JWKS before it dispatches a tool. The MCP SDK serves protected-resource metadata under `/.well-known/oauth-protected-resource/`; the app also respects `MCP_PATH` (default `/mcp`, set to `/yt/api/mcp` here).
+The HTTP server validates every bearer token's signature, Supabase issuer, and expiry against the project JWKS before it dispatches a tool. Set `MCP_JWT_AUDIENCE` to validate a stable audience claim; leave it blank for Supabase OAuth resource tokens. The MCP SDK serves protected-resource metadata under `/.well-known/oauth-protected-resource/`; the app also respects `MCP_PATH` (default `/mcp`, set to `/yt/api/mcp` here).
 
 The same endpoint works with any remote MCP host that supports Streamable HTTP and OAuth discovery. ChatGPT custom MCP apps require a supported plan and developer mode.
 

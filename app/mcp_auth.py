@@ -32,7 +32,7 @@ class SupabaseMcpSettings:
         supabase_url = _required("SUPABASE_URL").rstrip("/")
         issuer_url = f"{supabase_url}/auth/v1"
         jwks_url = f"{issuer_url}/.well-known/jwks.json"
-        audience = os.getenv("MCP_JWT_AUDIENCE", "authenticated").strip()
+        audience = os.getenv("MCP_JWT_AUDIENCE", "").strip()
         path = _path(os.getenv("MCP_PATH", "/mcp"))
         port = _port(os.getenv("MCP_PORT", "3003"))
         required_scopes = _scopes(os.getenv("MCP_REQUIRED_SCOPES", ""))

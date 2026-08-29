@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 from app.mcp_auth import SupabaseMcpSettings, SupabaseTokenVerifier
 
@@ -34,7 +35,7 @@ def test_supabase_settings_loads_environment(monkeypatch) -> None:
     assert settings.public_url == "https://ytlearner.example.com/yt/api/mcp"
     assert settings.issuer_url == "https://project.supabase.co/auth/v1"
     assert settings.jwks_url == "https://project.supabase.co/auth/v1/.well-known/jwks.json"
-    assert settings.audience == "authenticated"
+    assert settings.audience == ""
     assert settings.port == 3003
 
 
@@ -97,3 +98,18 @@ def test_supabase_verifier_passes_audience_and_issuer_to_decode(monkeypatch) -> 
 
     assert seen["issuer"] == "https://project.supabase.co/auth/v1"
     assert seen["audience"] == "authenticated"
+
+
+def test_supabase_verifier_allows_any_project_audience_when_unset(monkeypatch) -> None:
+    verifier = SupabaseTokenVerifier(replace(_settings(), audience=""), jwk_client=StubJwkClient())
+    seen: dict = {}
+
+    def capture(*args, **kwargs):
+        seen.update(kwargs)
+        return {"sub": "u", "client_id": "c"}
+
+    monkeypatch.setattr("app.mcp_auth.jwt.decode", capture)
+    asyncio.run(verifier.verify_token("token"))
+
+    assert seen["options"] == {"verify_aud": False}
+    assert "audience" not in seen

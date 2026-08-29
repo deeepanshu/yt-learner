@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from youtube_transcript_api import (
@@ -10,6 +11,7 @@ from youtube_transcript_api import (
     VideoUnavailable,
     YouTubeTranscriptApi,
 )
+from youtube_transcript_api.proxies import WebshareProxyConfig
 
 
 class TranscriptError(RuntimeError):
@@ -43,8 +45,26 @@ class TranscriptData:
         return "\n".join(segment.text for segment in self.segments)
 
 
+def _transcript_api() -> YouTubeTranscriptApi:
+    username = os.getenv("YT_LEARNER_WEBSHARE_PROXY_USERNAME", "").strip()
+    password = os.getenv("YT_LEARNER_WEBSHARE_PROXY_PASSWORD", "").strip()
+    if bool(username) != bool(password):
+        raise TranscriptFetchError(
+            "Set both YT_LEARNER_WEBSHARE_PROXY_USERNAME and "
+            "YT_LEARNER_WEBSHARE_PROXY_PASSWORD, or neither"
+        )
+    if not username:
+        return YouTubeTranscriptApi()
+    return YouTubeTranscriptApi(
+        proxy_config=WebshareProxyConfig(
+            proxy_username=username,
+            proxy_password=password,
+        )
+    )
+
+
 def fetch_transcript(video_id: str) -> TranscriptData:
-    api = YouTubeTranscriptApi()
+    api = _transcript_api()
     try:
         fetched = api.fetch(video_id, languages=["en"])
     except (NoTranscriptFound, TranscriptsDisabled) as exc:

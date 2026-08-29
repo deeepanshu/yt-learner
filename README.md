@@ -154,6 +154,17 @@ Action:   Block for 1 minute
 
 This prevents the public transcript endpoint becoming an abuseable YouTube proxy. The app itself does not handle user data or authentication.
 
+### YouTube egress
+
+YouTube can block the Pi's public IP. Configure a [Webshare Rotating Residential](https://www.webshare.io/) proxy to route only transcript requests through a rotating residential pool:
+
+```text
+YT_LEARNER_WEBSHARE_PROXY_USERNAME=<Webshare Proxy Username>
+YT_LEARNER_WEBSHARE_PROXY_PASSWORD=<Webshare Proxy Password>
+```
+
+Buy Webshare's **Rotating Residential** product, not Proxy Server or Static Residential. Leave both values blank to use direct Pi egress. The app rejects partial credentials at request time rather than silently using direct egress.
+
 In ChatGPT developer mode, add the URL above as a custom MCP endpoint and select **No authentication**.
 
 The same endpoint works with any remote MCP host that supports Streamable HTTP without authentication.

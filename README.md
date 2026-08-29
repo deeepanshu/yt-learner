@@ -144,7 +144,7 @@ MCP_HOST_PORT=3002
 
 Deploy the Compose stack, then configure Cloudflare:
 
-1. Route `ytlearner.deepanshujain.me` through Cloudflare Tunnel to `http://127.0.0.1:3002`.
+1. Route `ytlearner.deepanshujain.me` through Cloudflare Tunnel to `http://127.0.0.1:3003`.
 2. Create an Access MCP application for `https://ytlearner.deepanshujain.me/yt/api/mcp`.
 3. Enable managed OAuth and restrict its Access policy to your identity.
 4. Set the exact issuer, JWKS URL, and application AUD tag Cloudflare gives that application in `.env`.

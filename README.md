@@ -110,7 +110,7 @@ Optional values:
 - `YT_LEARNER_SCHEDULER_HOUR`
 - `YT_LEARNER_SCHEDULER_MINUTE`
 
-Compose pins OTEL to `http://otel-collector:4318`. Do not use `localhost` from inside the app containers.
+Compose pins OTEL to `http://otel.lab:4318` (Pi-hole record → observability CT). Do not use `localhost` from inside the app containers.
 
 ## MCP Server
 

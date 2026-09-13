@@ -3,7 +3,7 @@ x-app-service: &app-service
   env_file:
     - ${YT_LEARNER_ENV_FILE:-.env}
   environment:
-    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
     OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
     OTEL_RESOURCE_ATTRIBUTES: deployment.environment=prod
   restart: unless-stopped
@@ -35,7 +35,7 @@ services:
     <<: *app-service
     command: yt-learner-scheduler-loop
     environment:
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=prod
       YT_LEARNER_SCHEDULER_TIMEZONE: Asia/Bangkok
@@ -46,7 +46,7 @@ services:
     <<: *app-service
     command: python -m app.mcp_server --http
     environment:
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=prod
       MCP_PORT: "3003"

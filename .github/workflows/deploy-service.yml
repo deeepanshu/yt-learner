@@ -1,0 +1,38 @@
+name: Deploy Service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "compose.pve.yml"
+      - "grafana/**"
+      - ".github/workflows/deploy-service.yml"
+      - "!**/*.md"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Optional image tag to deploy (default: github.sha)"
+        required: false
+        type: string
+
+jobs:
+  deploy:
+    uses: deeepanshu/homelab-ci/.github/workflows/komodo-deploy.yml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      stack: yt-learner
+      image_name: deeepanshu/yt-learner
+      image_tag_variable: YT_LEARNER_IMAGE_TAG
+      image_path_regex: '^(app/|pyproject\.toml$|uv\.lock$|Dockerfile$)'
+      deploy_path_regex: '^(docker-compose\.yml$|compose\.pve\.yml$|grafana/|\.github/workflows/deploy-service\.yml$)'
+      caller_event: ${{ github.event_name }}
+      caller_before: ${{ github.event.before }}
+      image_tag: ${{ github.event.inputs.image_tag }}
+    secrets: inherit

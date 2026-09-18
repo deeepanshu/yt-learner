@@ -1,0 +1,18 @@
+services:
+  migrate:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
+  discord:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
+  worker:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
+  scheduler:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
+  mcp:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
+    ports: !override
+      - "3003:3003"

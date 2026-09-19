@@ -41,3 +41,5 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+# deploy test - ntfy e2e verification (safe to remove)

@@ -11,15 +11,16 @@ from app.pipeline import ProcessedVideo
 class FakeOutline:
     def __init__(self) -> None:
         self.documents: dict[str, dict[str, object]] = {}
+        self.forwarded_proto_values: list[str | None] = []
         self.next_id = 1
         self.server: HTTPServer | None = None
-        self.thread: threading.Thread | None = None
 
     def __enter__(self) -> "FakeOutline":
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
+                outer.forwarded_proto_values.append(self.headers.get("X-Forwarded-Proto"))
                 length = int(self.headers.get("Content-Length", "0"))
                 body = json.loads(self.rfile.read(length).decode("utf-8"))
                 if self.path == "/api/collections.list":
@@ -118,6 +119,7 @@ def test_publish_video_notes_creates_channel_and_video() -> None:
     assert note["parentDocumentId"] == "document-1"
     assert "[Watch on YouTube]" in note["text"]
     assert "yt-learner-video:abc123xyz89" in note["text"]
+    assert fake.forwarded_proto_values == ["https", "https", "https", "https", "https"]
 
 
 def test_publish_video_notes_updates_existing_document() -> None:

@@ -173,6 +173,9 @@ class OutlineClient:
                 "Accept": "application/json",
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
+                # The internal URL is HTTP, but Outline is configured to enforce
+                # HTTPS at the public proxy. Avoid a 301 that changes POST to GET.
+                "X-Forwarded-Proto": "https",
             },
             method="POST",
         )

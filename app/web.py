@@ -19,6 +19,7 @@ from app.youtube_channels import ResolvedYouTubeChannel, YouTubeChannelError, re
 
 LOGGER = logging.getLogger(__name__)
 ChannelResolver = Callable[[str], ResolvedYouTubeChannel]
+UI_PREFIX = "/ui"
 
 
 class WatchWeb:
@@ -74,10 +75,10 @@ class WatchWeb:
 
     def _redirect(self, *, message: str | None = None, error: str | None = None) -> RedirectResponse:
         if error:
-            return RedirectResponse(f"/?error={quote_plus(error)}", status_code=303)
+            return RedirectResponse(f"{UI_PREFIX}/?error={quote_plus(error)}", status_code=303)
         if message:
-            return RedirectResponse(f"/?message={quote_plus(message)}", status_code=303)
-        return RedirectResponse("/", status_code=303)
+            return RedirectResponse(f"{UI_PREFIX}/?message={quote_plus(message)}", status_code=303)
+        return RedirectResponse(f"{UI_PREFIX}/", status_code=303)
 
     def _render_page(
         self,
@@ -96,7 +97,7 @@ class WatchWeb:
                   <td><code>{html.escape(watch.youtube_channel_id)}</code></td>
                   <td>{html.escape(status)}</td>
                   <td>
-                    <form method="post" action="/watches/{watch.id}/delete">
+                    <form method="post" action="{UI_PREFIX}/watches/{watch.id}/delete">
                       <button type="submit">Remove</button>
                     </form>
                   </td>
@@ -145,7 +146,7 @@ class WatchWeb:
   <h1>yt-learner watches</h1>
   <p class="hint">New uploads are learned on the daily scheduler and saved to Trilium. The first poll after adding a channel records the feed and does not backfill.</p>
   {banner}
-  <form class="inline" method="post" action="/watches">
+  <form class="inline" method="post" action="{UI_PREFIX}/watches">
     <label for="channel">YouTube channel</label>
     <input id="channel" name="channel" required placeholder="@handle, channel URL, or UC… id" autocomplete="off">
     <button type="submit">Watch</button>
@@ -154,6 +155,9 @@ class WatchWeb:
 </body>
 </html>
 """
+
+async def redirect_root(_request: Request) -> RedirectResponse:
+    return RedirectResponse(url=f"{UI_PREFIX}/", status_code=303)
 
 
 def create_app(
@@ -167,9 +171,11 @@ def create_app(
     web = WatchWeb(watch_repository=repository, resolve_channel=resolve_channel)
     return Starlette(
         routes=[
-            Route("/", web.home, methods=["GET"]),
-            Route("/watches", web.add_watch, methods=["POST"]),
-            Route("/watches/{subscription_id:int}/delete", web.delete_watch, methods=["POST"]),
+            Route("/", redirect_root, methods=["GET"]),
+            Route(UI_PREFIX, web.home, methods=["GET"]),
+            Route(f"{UI_PREFIX}/", web.home, methods=["GET"]),
+            Route(f"{UI_PREFIX}/watches", web.add_watch, methods=["POST"]),
+            Route(f"{UI_PREFIX}/watches/{{subscription_id:int}}/delete", web.delete_watch, methods=["POST"]),
         ]
     )
 

@@ -80,7 +80,7 @@ The app has two long-lived app processes and one scheduled process:
 
 In normal deployment all three containers should be running. If only the watch UI is running, watches can change but jobs will never complete. If only the worker is running, existing queued jobs will still process, but you will not be able to add or remove watches. If the scheduler is not running, watched channels will stop enqueueing new uploads.
 
-The watch UI binds to port `3004` and is for Tailscale/LAN use only.
+The watch UI is served at `/ui` on port `3004`. Public hostname is `https://ytlearner.deepanshujain.me/ui` via Cloudflare Tunnel; put Cloudflare Access on `/ui*` before using it from the internet.
 
 ## Environment
 
@@ -170,7 +170,7 @@ English transcripts only, same constraint as the worker. Videos without captions
 
 ## Watched Channels
 
-Open the watch UI (`http://<host>:3004` on Tailscale/LAN) to add or remove YouTube channels.
+Open `https://ytlearner.deepanshujain.me/ui` (Cloudflare Access) or `http://<host>:3004/ui` on Tailscale/LAN.
 
 Behavior:
 

@@ -14,8 +14,10 @@ from starlette.routing import Route
 
 from app.channel_watches import WatchRepository, WatchedChannel
 from app.config import Settings, load_settings
+from app.job_queue import JobQueue
 from app.telemetry import configure_logging
 from app.youtube_channels import ResolvedYouTubeChannel, YouTubeChannelError, resolve_youtube_channel
+from app.youtube_urls import InvalidYouTubeUrl, parse_youtube_url_or_id
 
 LOGGER = logging.getLogger(__name__)
 ChannelResolver = Callable[[str], ResolvedYouTubeChannel]
@@ -27,9 +29,11 @@ class WatchWeb:
         self,
         *,
         watch_repository: WatchRepository,
+        job_queue: JobQueue,
         resolve_channel: ChannelResolver = resolve_youtube_channel,
     ) -> None:
         self.watch_repository = watch_repository
+        self.job_queue = job_queue
         self.resolve_channel = resolve_channel
 
     async def home(self, request: Request) -> HTMLResponse:
@@ -60,6 +64,30 @@ class WatchWeb:
             subscription.youtube_channel_title,
         )
         return self._redirect(message=f"Watching {subscription.youtube_channel_title}.")
+
+    async def learn_video(self, request: Request) -> Response:
+        form = await request.form()
+        raw = str(form.get("url") or "").strip()
+        if not raw:
+            return self._redirect(error="Paste a YouTube video URL or 11-character id.")
+        try:
+            parsed = parse_youtube_url_or_id(raw)
+        except InvalidYouTubeUrl:
+            return self._redirect(error="I could not parse that YouTube URL.")
+        job = self.job_queue.enqueue_summarize_video(
+            video_url=parsed.canonical_url,
+            requested_by="ui",
+            source="ui_learn",
+        )
+        LOGGER.info(
+            "watch_ui_learn_queued job_id=%s video_id=%s canonical_url=%s",
+            job.id,
+            parsed.video_id,
+            parsed.canonical_url,
+        )
+        return self._redirect(
+            message=f"Queued job #{job.id} for {parsed.canonical_url}. Worker will call Ollama and write to Trilium."
+        )
 
     async def delete_watch(self, request: Request) -> Response:
         subscription_id = int(request.path_params["subscription_id"])
@@ -144,8 +172,13 @@ class WatchWeb:
 </head>
 <body>
   <h1>yt-learner watches</h1>
-  <p class="hint">New uploads are learned on the daily scheduler and saved to Trilium. The first poll after adding a channel records the feed and does not backfill.</p>
+  <p class="hint">New uploads are learned on the daily scheduler and saved to Trilium. The first poll after adding a channel records the feed and does not backfill. Learn queues one video now.</p>
   {banner}
+  <form class="inline" method="post" action="{UI_PREFIX}/learn">
+    <label for="url">Learn video</label>
+    <input id="url" name="url" required placeholder="https://www.youtube.com/watch?v=… or video id" autocomplete="off">
+    <button type="submit">Learn</button>
+  </form>
   <form class="inline" method="post" action="{UI_PREFIX}/watches">
     <label for="channel">YouTube channel</label>
     <input id="channel" name="channel" required placeholder="@handle, channel URL, or UC… id" autocomplete="off">
@@ -164,16 +197,19 @@ def create_app(
     *,
     settings: Settings | None = None,
     watch_repository: WatchRepository | None = None,
+    job_queue: JobQueue | None = None,
     resolve_channel: ChannelResolver = resolve_youtube_channel,
 ) -> Starlette:
     loaded = settings or load_settings()
     repository = watch_repository or WatchRepository(loaded.database_url)
-    web = WatchWeb(watch_repository=repository, resolve_channel=resolve_channel)
+    queue = job_queue or JobQueue(loaded.database_url)
+    web = WatchWeb(watch_repository=repository, job_queue=queue, resolve_channel=resolve_channel)
     return Starlette(
         routes=[
             Route("/", redirect_root, methods=["GET"]),
             Route(UI_PREFIX, web.home, methods=["GET"]),
             Route(f"{UI_PREFIX}/", web.home, methods=["GET"]),
+            Route(f"{UI_PREFIX}/learn", web.learn_video, methods=["POST"]),
             Route(f"{UI_PREFIX}/watches", web.add_watch, methods=["POST"]),
             Route(f"{UI_PREFIX}/watches/{{subscription_id:int}}/delete", web.delete_watch, methods=["POST"]),
         ]

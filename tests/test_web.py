@@ -6,6 +6,7 @@ from app.channel_watches import WatchRepository
 from app.config import Settings
 from app.web import create_app
 from app.youtube_channels import ResolvedYouTubeChannel, YouTubeChannelError
+from app.job_queue import JobQueue
 
 
 def dummy_settings(database_url: str) -> Settings:
@@ -64,3 +65,25 @@ def test_watch_ui_shows_resolve_error(database_url) -> None:
     app = create_app(settings=dummy_settings(database_url), resolve_channel=explode)
     response = TestClient(app).post("/ui/watches", data={"channel": "nope"}, follow_redirects=True)
     assert "I could not resolve that YouTube channel." in response.text
+
+def test_learn_ui_queues_summarize_job(database_url) -> None:
+    app = create_app(settings=dummy_settings(database_url), resolve_channel=resolve_ai)
+    response = TestClient(app).post(
+        "/ui/learn",
+        data={"url": "https://www.youtube.com/watch?v=abc123xyz89"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "Queued job #" in response.text
+    assert "abc123xyz89" in response.text
+    job = JobQueue(database_url).claim_next_job()
+    assert job is not None
+    assert job.source == "ui_learn"
+    assert job.video_url == "https://www.youtube.com/watch?v=abc123xyz89"
+
+
+def test_learn_ui_rejects_invalid_url(database_url) -> None:
+    app = create_app(settings=dummy_settings(database_url), resolve_channel=resolve_ai)
+    response = TestClient(app).post("/ui/learn", data={"url": "https://example.com"}, follow_redirects=True)
+    assert "I could not parse that YouTube URL." in response.text
+    assert JobQueue(database_url).claim_next_job() is None

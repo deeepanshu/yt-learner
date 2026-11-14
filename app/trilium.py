@@ -14,6 +14,7 @@ from app.config import Settings
 from app.pipeline import AnsweredVideoQuestion, ProcessedVideo
 
 VIDEO_ID_LABEL = "ytLearnerVideoId"
+CHANNEL_LABEL = "ytLearnerChannelKey"
 MAX_NOTE_TITLE_CHARS = 200
 
 
@@ -83,7 +84,8 @@ class TriliumClient:
             self._put_content(existing, content)
             self._patch_title(existing, title)
             return self._published(existing)
-        note_id = self._create_note(self.parent_note_id, title, content)
+        parent_id = self._ensure_channel_note(result.channel_title)
+        note_id = self._create_note(parent_id, title, content)
         self._add_label(note_id, VIDEO_ID_LABEL, result.video_id)
         return self._published(note_id)
 
@@ -130,14 +132,35 @@ class TriliumClient:
         note_id = results[0].get("noteId")
         return str(note_id) if note_id else None
 
-    def _create_note(self, parent_note_id: str, title: str, content: str) -> str:
+    def _ensure_channel_note(self, channel_title: str | None) -> str:
+        name = " ".join((channel_title or "").split()) or "Unknown channel"
+        existing = self._find_note_id(CHANNEL_LABEL, name)
+        if existing is not None:
+            return existing
+        note_id = self._create_note(
+            self.parent_note_id,
+            format_note_title(name),
+            "",
+            note_type="book",
+        )
+        self._add_label(note_id, CHANNEL_LABEL, name)
+        return note_id
+
+    def _create_note(
+        self,
+        parent_note_id: str,
+        title: str,
+        content: str,
+        *,
+        note_type: str = "text",
+    ) -> str:
         payload = self._request(
             "POST",
             "/create-note",
             json_body={
                 "parentNoteId": parent_note_id,
                 "title": title,
-                "type": "text",
+                "type": note_type,
                 "content": content,
             },
             expected=(201,),

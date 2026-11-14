@@ -175,7 +175,7 @@ Open `https://ytlearner.deepanshujain.me/ui` (Cloudflare Access) or `http://<hos
 
 Behavior:
 
-- Learn queues one video immediately; the worker calls Ollama and writes the note to Trilium
+- Learn queues one video immediately; the worker calls Ollama and writes the note to Trilium under `Youtube Learning / {channel name}`
 - the first sync for a newly watched YouTube channel is bootstrap-only and does not backfill existing uploads
 - later uploads are discovered from the YouTube channel feed and enqueued once
 - discovered video ids are stored in Postgres, so restarts do not re-enqueue the same upload

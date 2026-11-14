@@ -134,12 +134,12 @@ class WorkerService:
         if isinstance(exc, TriliumError):
             return "I could not save the notes to Trilium. Please try again later."
         if isinstance(exc, ExtractionError):
-            return "The extraction failed while calling OpenAI. The transcript was saved for debugging."
-        return "The extraction failed while calling OpenAI. Try again later."
+            return "The extraction failed while calling Ollama. The transcript was saved for debugging."
+        return "The extraction failed while calling Ollama. Try again later."
 
     def _log_failure(self, job: Job, exc: Exception) -> None:
         if isinstance(exc, ExtractionError):
-            LOGGER.exception("OpenAI extraction failure for job %s", job.id)
+            LOGGER.exception("Ollama extraction failure for job %s", job.id)
             return
         if isinstance(exc, TriliumError):
             LOGGER.exception("Trilium publish failure for job %s", job.id)
@@ -150,8 +150,9 @@ class WorkerService:
 def build_processor(settings: Settings) -> VideoProcessor:
     store = OutputStore(settings.database_url)
     extractor = LearningExtractor(
-        api_key=settings.openai_api_key,
-        model=settings.openai_model,
+        api_key=settings.ollama_api_key,
+        model=settings.ollama_model,
+        base_url=settings.ollama_base_url,
         max_transcript_chars=settings.max_transcript_chars,
     )
     return VideoProcessor(store=store, extractor=extractor)

@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from openai import AsyncOpenAI
-from openai.types.responses.easy_input_message_param import EasyInputMessageParam
-from openai.types.responses.response_input_param import ResponseInputParam
 
 from app.transcript import TranscriptData
 
@@ -70,8 +68,15 @@ class ExtractionError(RuntimeError):
 
 
 class LearningExtractor:
-    def __init__(self, *, api_key: str, model: str, max_transcript_chars: int | None = None) -> None:
-        self.client = AsyncOpenAI(api_key=api_key)
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        model: str,
+        base_url: str,
+        max_transcript_chars: int | None = None,
+    ) -> None:
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model = model
         self.max_transcript_chars = max_transcript_chars
 
@@ -103,18 +108,19 @@ class LearningExtractor:
             )
         )
 
-    async def _create_markdown(self, messages: ResponseInputParam) -> str:
+    async def _create_markdown(self, messages: list[dict[str, str]]) -> str:
         try:
-            response = await self.client.responses.create(
+            response = await self.client.chat.completions.create(
                 model=self.model,
-                input=messages,
+                messages=messages,
             )
         except Exception as exc:
-            raise ExtractionError("OpenAI extraction request failed") from exc
+            raise ExtractionError("Ollama extraction request failed") from exc
 
-        markdown = (response.output_text or "").strip()
+        choice = response.choices[0] if response.choices else None
+        markdown = ((choice.message.content if choice is not None else None) or "").strip()
         if not markdown:
-            raise ExtractionError("OpenAI extraction returned empty markdown")
+            raise ExtractionError("Ollama extraction returned empty markdown")
         return markdown
 
 
@@ -123,7 +129,7 @@ def build_messages(
     payload: ExtractionInput,
     processed_at: str,
     max_transcript_chars: int | None = None,
-) -> ResponseInputParam:
+) -> list[dict[str, str]]:
     transcript_text = payload.transcript.text
     if max_transcript_chars is not None:
         transcript_text = transcript_text[:max_transcript_chars]
@@ -149,9 +155,10 @@ def build_messages(
         )
         system_prompt = SYSTEM_PROMPT
 
-    system_message: EasyInputMessageParam = {"role": "system", "content": system_prompt}
-    user_message: EasyInputMessageParam = {"role": "user", "content": user_prompt}
-    return [system_message, user_message]
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
 
 
 def build_question_messages(
@@ -161,7 +168,7 @@ def build_question_messages(
     transcript_text: str,
     question: str,
     max_transcript_chars: int | None = None,
-) -> ResponseInputParam:
+) -> list[dict[str, str]]:
     if max_transcript_chars is not None:
         transcript_text = transcript_text[:max_transcript_chars]
     user_prompt = (
@@ -172,6 +179,7 @@ def build_question_messages(
         "Transcript:\n"
         f"{transcript_text}"
     )
-    system_message: EasyInputMessageParam = {"role": "system", "content": CHAT_SYSTEM_PROMPT}
-    user_message: EasyInputMessageParam = {"role": "user", "content": user_prompt}
-    return [system_message, user_message]
+    return [
+        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]

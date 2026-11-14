@@ -107,7 +107,8 @@ make docker-logs
 Copy `.env.example` to `.env` and fill in the required values before local runs.
 Required values:
 
-- `OPENAI_API_KEY`
+- `OLLAMA_API_KEY`
+- `OLLAMA_MODEL`
 - `DATABASE_URL`
 - `TRILIUM_ETAPI_URL`
 - `TRILIUM_ETAPI_TOKEN`
@@ -118,7 +119,7 @@ Common optional values:
 - `TRILIUM_UI_URL`
 - `WATCH_UI_HOST`
 - `WATCH_UI_PORT`
-- `OPENAI_MODEL`
+- `OLLAMA_BASE_URL`
 - `YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS`
 - `OTEL_EXPORTER_OTLP_ENDPOINT`
 - `OTEL_EXPORTER_OTLP_PROTOCOL`

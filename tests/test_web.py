@@ -10,7 +10,8 @@ from app.youtube_channels import ResolvedYouTubeChannel, YouTubeChannelError
 
 def dummy_settings(database_url: str) -> Settings:
     return Settings(
-        openai_api_key="key",
+        ollama_api_key="key",
+        ollama_model="test-model",
         database_url=database_url,
         trilium_etapi_url="http://trilium.example/etapi",
         trilium_etapi_token="token",

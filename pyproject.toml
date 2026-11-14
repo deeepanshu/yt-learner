@@ -1,7 +1,7 @@
 [project]
 name = "yt-learner"
 version = "0.1.0"
-description = "YouTube channel learning notes published to Trilium."
+description = "YouTube channel learning notes published to Outline."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

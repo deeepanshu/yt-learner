@@ -14,9 +14,10 @@ def dummy_settings(database_url: str) -> Settings:
         ollama_api_key="key",
         ollama_model="test-model",
         database_url=database_url,
-        trilium_etapi_url="http://trilium.example/etapi",
-        trilium_etapi_token="token",
-        trilium_parent_note_id="parentNote",
+        outline_url="http://outline.example",
+        outline_api_key="token",
+        outline_collection_id="collection",
+        outline_ui_url="https://outline.example",
     )
 
 

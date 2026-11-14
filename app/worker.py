@@ -14,7 +14,7 @@ from app.pipeline import ProcessedVideo, VideoProcessor
 from app.storage import OutputStore
 from app.telemetry import NoopTelemetry, configure_logging, configure_telemetry
 from app.transcript import TranscriptFetchError, TranscriptUnavailableError, UnsupportedVideoError
-from app.trilium import NotePublisher, TriliumError, build_trilium_client
+from app.outline import NotePublisher, OutlineError, build_outline_client
 
 LOGGER = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class WorkerService:
             reused_existing=result.reused_existing,
         )
         LOGGER.info(
-            "worker_job_done job_id=%s source=%s learning_record_id=%s reused_existing=%s filename=%s trilium_note_id=%s duration_seconds=%.3f",
+            "worker_job_done job_id=%s source=%s learning_record_id=%s reused_existing=%s filename=%s outline_document_id=%s duration_seconds=%.3f",
             job.id,
             job.source,
             result.learning_record_id,
@@ -131,8 +131,8 @@ class WorkerService:
             return "I could not fetch the transcript right now. Please try again later."
         if isinstance(exc, UnsupportedVideoError):
             return "The video looks private, unavailable, or unsupported."
-        if isinstance(exc, TriliumError):
-            return "I could not save the notes to Trilium. Please try again later."
+        if isinstance(exc, OutlineError):
+            return "I could not save the notes to Outline. Please try again later."
         if isinstance(exc, ExtractionError):
             return "The extraction failed while calling Ollama. The transcript was saved for debugging."
         return "The extraction failed while calling Ollama. Try again later."
@@ -141,8 +141,8 @@ class WorkerService:
         if isinstance(exc, ExtractionError):
             LOGGER.exception("Ollama extraction failure for job %s", job.id)
             return
-        if isinstance(exc, TriliumError):
-            LOGGER.exception("Trilium publish failure for job %s", job.id)
+        if isinstance(exc, OutlineError):
+            LOGGER.exception("Outline publish failure for job %s", job.id)
             return
         LOGGER.exception("Unhandled processing failure for job %s", job.id)
 
@@ -175,7 +175,7 @@ def main() -> int:
     queue = JobQueue(settings.database_url)
     processor = build_processor(settings)
     watch_repository = WatchRepository(settings.database_url)
-    note_publisher = build_trilium_client(settings)
+    note_publisher = build_outline_client(settings)
     service = WorkerService(
         settings=settings,
         queue=queue,

@@ -47,6 +47,7 @@ class FakeEtapi:
                         "noteId": note_id,
                         "title": body["title"],
                         "parentNoteId": body["parentNoteId"],
+                        "type": body.get("type"),
                     }
                     outer.contents[note_id] = body["content"]
                     outer.labels[note_id] = {}
@@ -123,7 +124,7 @@ def make_client(fake: FakeEtapi) -> TriliumClient:
     )
 
 
-def test_publish_video_notes_creates_labeled_html_note() -> None:
+def test_publish_video_notes_creates_channel_folder_and_video() -> None:
     with FakeEtapi() as fake:
         published = make_client(fake).publish_video_notes(
             ProcessedVideo(
@@ -134,17 +135,20 @@ def test_publish_video_notes_creates_labeled_html_note() -> None:
                 filename="demo.md",
                 markdown="# Learned\n\n- point",
                 reused_existing=False,
+                channel_title="AI Engineer",
             )
         )
 
-    assert published.note_id == "note1"
-    assert published.url == "https://trilium.example/#note1"
-    assert fake.notes["note1"]["title"] == "Demo"
+    assert published.note_id == "note2"
+    assert fake.notes["note1"]["title"] == "AI Engineer"
     assert fake.notes["note1"]["parentNoteId"] == "parentNote"
-    assert fake.labels["note1"]["ytLearnerVideoId"] == "abc123xyz89"
-    assert '<a href="https://www.youtube.com/watch?v=abc123xyz89">' in fake.contents["note1"]
-    assert "<h1>Learned</h1>" in fake.contents["note1"]
-    assert "<li>point</li>" in fake.contents["note1"]
+    assert fake.notes["note1"]["type"] == "book"
+    assert fake.labels["note1"]["ytLearnerChannelKey"] == "AI Engineer"
+    assert fake.notes["note2"]["title"] == "Demo"
+    assert fake.notes["note2"]["parentNoteId"] == "note1"
+    assert fake.labels["note2"]["ytLearnerVideoId"] == "abc123xyz89"
+    assert "<h1>Learned</h1>" in fake.contents["note2"]
+    assert "<li>point</li>" in fake.contents["note2"]
 
 
 def test_publish_video_notes_updates_existing_note() -> None:
@@ -159,6 +163,7 @@ def test_publish_video_notes_updates_existing_note() -> None:
                 filename="demo.md",
                 markdown="# Old",
                 reused_existing=False,
+                channel_title="AI Engineer",
             )
         )
         second = client.publish_video_notes(
@@ -170,13 +175,13 @@ def test_publish_video_notes_updates_existing_note() -> None:
                 filename="demo.md",
                 markdown="# New",
                 reused_existing=True,
+                channel_title="AI Engineer",
             )
         )
 
-    assert first.note_id == second.note_id
-    assert list(fake.notes) == ["note1"]
-    assert fake.notes["note1"]["title"] == "New title"
-    assert "<h1>New</h1>" in fake.contents["note1"]
+    assert first.note_id == second.note_id == "note2"
+    assert fake.notes["note2"]["title"] == "New title"
+    assert "<h1>New</h1>" in fake.contents["note2"]
 
 
 def test_publish_question_answer_creates_child_note() -> None:
@@ -191,6 +196,7 @@ def test_publish_question_answer_creates_child_note() -> None:
                 filename="demo.md",
                 markdown="# Learned",
                 reused_existing=False,
+                channel_title="AI Engineer",
             )
         )
         answer = client.publish_question_answer(
@@ -204,10 +210,11 @@ def test_publish_question_answer_creates_child_note() -> None:
             question="Why did it fail?",
         )
 
-    assert answer.note_id == "note2"
-    assert fake.notes["note2"]["parentNoteId"] == video.note_id
-    assert fake.notes["note2"]["title"] == "Q: Why did it fail?"
-    assert "Because of retries." in fake.contents["note2"]
+    assert video.note_id == "note2"
+    assert answer.note_id == "note3"
+    assert fake.notes["note3"]["parentNoteId"] == video.note_id
+    assert fake.notes["note3"]["title"] == "Q: Why did it fail?"
+    assert "Because of retries." in fake.contents["note3"]
 
 
 def test_publish_video_notes_raises_on_http_error() -> None:

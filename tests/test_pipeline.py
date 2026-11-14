@@ -33,7 +33,7 @@ def test_process_video_uses_fetched_metadata_title(database_url, monkeypatch) ->
     processor = VideoProcessor(
         store=OutputStore(database_url),
         extractor=extractor,
-        metadata_fetcher=lambda url: VideoMetadata(title="Real Video Title"),
+        metadata_fetcher=lambda url: VideoMetadata(title="Real Video Title", author_name="AI Engineer"),
     )
 
     result = run_async(
@@ -41,6 +41,7 @@ def test_process_video_uses_fetched_metadata_title(database_url, monkeypatch) ->
     )
 
     assert result.title == "Real Video Title"
+    assert result.channel_title == "AI Engineer"
     assert extractor.last_title == "Real Video Title"
     assert result.filename.endswith("__real-video-title__abc123xyz.md")
     assert result.markdown.startswith("# Real Video Title")

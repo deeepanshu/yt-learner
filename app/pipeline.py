@@ -48,6 +48,7 @@ class ProcessedVideo:
     filename: str
     markdown: str
     reused_existing: bool
+    channel_title: str | None = None
 
 
 class VideoProcessor:
@@ -120,6 +121,15 @@ class VideoProcessor:
             source_key=parsed.video_id,
             record_type=record_type,
         )
+        channel_title: str | None = None
+        fetched_title: str | None = None
+        try:
+            metadata = self.metadata_fetcher(parsed.canonical_url)
+            fetched_title = metadata.title
+            channel_title = metadata.author_name
+        except VideoMetadataError:
+            pass
+
         if existing is not None:
             return ProcessedVideo(
                 learning_record_id=existing.id,
@@ -129,13 +139,10 @@ class VideoProcessor:
                 filename=existing.filename,
                 markdown=existing.markdown,
                 reused_existing=True,
+                channel_title=channel_title,
             )
 
-        try:
-            metadata = self.metadata_fetcher(parsed.canonical_url)
-            title = metadata.title
-        except VideoMetadataError:
-            title = f"youtube-video-{parsed.video_id}"
+        title = fetched_title or f"youtube-video-{parsed.video_id}"
 
         transcript = fetch_transcript(parsed.video_id)
         self.store.save_transcript(
@@ -178,4 +185,5 @@ class VideoProcessor:
             filename=stored.filename,
             markdown=stored.markdown,
             reused_existing=stored.reused_existing,
+            channel_title=channel_title,
         )

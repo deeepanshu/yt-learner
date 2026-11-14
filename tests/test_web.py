@@ -28,22 +28,29 @@ def resolve_ai(_raw: str) -> ResolvedYouTubeChannel:
 
 def test_watch_ui_lists_empty_state(database_url) -> None:
     app = create_app(settings=dummy_settings(database_url), resolve_channel=resolve_ai)
-    response = TestClient(app).get("/")
+    response = TestClient(app).get("/ui/")
     assert response.status_code == 200
     assert "No watched channels yet" in response.text
+
+
+def test_root_redirects_to_ui(database_url) -> None:
+    app = create_app(settings=dummy_settings(database_url), resolve_channel=resolve_ai)
+    response = TestClient(app, follow_redirects=False).get("/")
+    assert response.status_code == 303
+    assert response.headers["location"] == "/ui/"
 
 
 def test_watch_ui_adds_and_removes_channel(database_url) -> None:
     app = create_app(settings=dummy_settings(database_url), resolve_channel=resolve_ai)
     client = TestClient(app)
 
-    added = client.post("/watches", data={"channel": "@ai"}, follow_redirects=True)
+    added = client.post("/ui/watches", data={"channel": "@ai"}, follow_redirects=True)
     assert added.status_code == 200
     assert "Watching AI Channel" in added.text
     assert "UC12345678901234567890" in added.text
 
     subscription = WatchRepository(database_url).list_subscriptions()[0]
-    removed = client.post(f"/watches/{subscription.id}/delete", follow_redirects=True)
+    removed = client.post(f"/ui/watches/{subscription.id}/delete", follow_redirects=True)
     assert removed.status_code == 200
     assert "Stopped watching AI Channel" in removed.text
     assert "No watched channels yet" in removed.text
@@ -54,5 +61,5 @@ def test_watch_ui_shows_resolve_error(database_url) -> None:
         raise YouTubeChannelError("nope")
 
     app = create_app(settings=dummy_settings(database_url), resolve_channel=explode)
-    response = TestClient(app).post("/watches", data={"channel": "nope"}, follow_redirects=True)
+    response = TestClient(app).post("/ui/watches", data={"channel": "nope"}, follow_redirects=True)
     assert "I could not resolve that YouTube channel." in response.text

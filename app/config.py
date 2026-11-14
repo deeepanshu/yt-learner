@@ -55,6 +55,7 @@ def load_settings() -> Settings:
     return Settings(
         ollama_api_key=_required("OLLAMA_API_KEY"),
         ollama_model=_required("OLLAMA_MODEL"),
+        database_url=_required("DATABASE_URL"),
         outline_url=_required("OUTLINE_URL"),
         outline_api_key=_required("OUTLINE_API_KEY"),
         outline_collection_id=_required("OUTLINE_COLLECTION_ID"),

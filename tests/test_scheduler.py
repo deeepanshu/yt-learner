@@ -23,11 +23,9 @@ def test_bootstrap_records_existing_feed_without_queueing(database_url) -> None:
     queue = JobQueue(database_url)
     store = OutputStore(database_url)
     subscription = repository.add_or_update_subscription(
-        guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
         youtube_channel_ref="https://www.youtube.com/channel/UC12345678901234567890",
         youtube_channel_title="AI Channel",
-        discord_channel_id=1001,
     )
     scheduler = ChannelScheduler(
         watch_repository=repository,
@@ -59,11 +57,9 @@ def test_new_video_after_bootstrap_is_queued_once(database_url) -> None:
     queue = JobQueue(database_url)
     store = OutputStore(database_url)
     subscription = repository.add_or_update_subscription(
-        guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
         youtube_channel_ref="https://www.youtube.com/channel/UC12345678901234567890",
         youtube_channel_title="AI Channel",
-        discord_channel_id=1001,
     )
     fetcher = FakeFeedFetcher(
         {
@@ -101,7 +97,7 @@ def test_new_video_after_bootstrap_is_queued_once(database_url) -> None:
     assert result.jobs_enqueued == 1
     assert claimed is not None
     assert claimed.video_url == "https://www.youtube.com/watch?v=new-3"
-    assert claimed.guild_id == "guild-1"
+    assert claimed.source == "youtube_channel_scheduler"
     discovered = repository.list_discovered_videos(subscription_id=subscription.id)
     assert sorted(video.video_id for video in discovered) == ["new-1", "new-2", "new-3"]
     assert discovered[-1].queued_job_id == claimed.id
@@ -112,11 +108,9 @@ def test_existing_learning_record_is_not_requeued(database_url) -> None:
     queue = JobQueue(database_url)
     store = OutputStore(database_url)
     subscription = repository.add_or_update_subscription(
-        guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
         youtube_channel_ref="https://www.youtube.com/channel/UC12345678901234567890",
         youtube_channel_title="AI Channel",
-        discord_channel_id=1001,
     )
     store.save_markdown(
         title="Already Learned",

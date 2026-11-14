@@ -1,11 +1,10 @@
 [project]
 name = "yt-learner"
 version = "0.1.0"
-description = "Discord-first MVP for turning YouTube videos into learning notes."
+description = "YouTube channel learning notes published to Trilium."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "discord.py>=2.4.0",
     "opentelemetry-exporter-otlp-proto-http>=1.38.0",
     "opentelemetry-sdk>=1.38.0",
     "mcp>=2.1.1",
@@ -13,10 +12,14 @@ dependencies = [
     "psycopg[binary]>=3.2.0",
     "python-dotenv>=1.0.0",
     "youtube-transcript-api>=0.6.2",
+    "markdown>=3.11.3",
+    "starlette>=1.6.0",
+    "uvicorn>=0.52.4",
+    "python-multipart>=0.0.32",
 ]
 
 [project.scripts]
-yt-learner-discord = "app.discord_bot:main"
+yt-learner-web = "app.web:main"
 yt-learner-mcp = "app.mcp_server:main"
 yt-learner-mcp-http = "app.mcp_server:http_main"
 yt-learner-migrate = "app.migrate:main"

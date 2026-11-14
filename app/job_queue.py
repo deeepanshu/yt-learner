@@ -51,35 +51,6 @@ class Job:
         return str(raw)
 
     @property
-    def question(self) -> str | None:
-        raw = self.input_data.get("question")
-        if not isinstance(raw, str):
-            return None
-        cleaned = raw.strip()
-        return cleaned or None
-
-    @property
-    def reply_channel_id(self) -> int | None:
-        raw = self.input_data.get("reply_channel_id")
-        if raw is None:
-            return None
-        return int(raw)
-
-    @property
-    def guild_id(self) -> str | None:
-        raw = self.input_data.get("guild_id")
-        if raw is None:
-            return None
-        return str(raw)
-
-    @property
-    def reply_message_id(self) -> int | None:
-        raw = self.input_data.get("reply_message_id")
-        if raw is None:
-            return None
-        return int(raw)
-
-    @property
     def extra_prompt(self) -> str | None:
         raw = self.input_data.get("extra_prompt")
         if not isinstance(raw, str):
@@ -98,18 +69,10 @@ class JobQueue:
         video_url: str,
         requested_by: str,
         source: str,
-        reply_channel_id: int | None,
-        reply_message_id: int | None = None,
-        guild_id: str | None = None,
         extra_prompt: str | None = None,
         priority: int = 0,
     ) -> Job:
-        input_data = {
-            "video_url": video_url,
-            "reply_channel_id": reply_channel_id,
-            "reply_message_id": reply_message_id,
-            "guild_id": guild_id,
-        }
+        input_data: dict[str, Any] = {"video_url": video_url}
         if extra_prompt is not None:
             input_data["extra_prompt"] = extra_prompt
         return self._enqueue_job(
@@ -117,32 +80,6 @@ class JobQueue:
             requested_by=requested_by,
             source=source,
             input_data=input_data,
-            priority=priority,
-        )
-
-    def enqueue_answer_video_question(
-        self,
-        *,
-        video_id: str,
-        question: str,
-        requested_by: str,
-        source: str,
-        reply_channel_id: int | None,
-        reply_message_id: int | None,
-        guild_id: str | None,
-        priority: int = 0,
-    ) -> Job:
-        return self._enqueue_job(
-            task_type=TASK_ANSWER_VIDEO_QUESTION,
-            requested_by=requested_by,
-            source=source,
-            input_data={
-                "video_id": video_id,
-                "question": question,
-                "reply_channel_id": reply_channel_id,
-                "reply_message_id": reply_message_id,
-                "guild_id": guild_id,
-            },
             priority=priority,
         )
 
@@ -262,23 +199,7 @@ class JobQueue:
             raise LookupError(f"Job {job_id} does not exist")
         return self._row_to_job(row)
 
-    def update_reply_message_id(self, job_id: int, *, reply_message_id: int) -> Job:
-        job = self.get_job(job_id)
-        input_data = dict(job.input_data)
-        input_data["reply_message_id"] = reply_message_id
-        with connect(self.database_url) as conn:
-            row = conn.execute(
-                """
-                UPDATE jobs
-                SET input_json = %s
-                WHERE id = %s
-                RETURNING *
-                """,
-                (Jsonb(input_data), job_id),
-            ).fetchone()
-        if row is None:
-            raise LookupError(f"Job {job_id} does not exist")
-        return self._row_to_job(row)
+
 
     def _row_to_job(self, row: dict[str, object]) -> Job:
         raw_input = row["input_json"]

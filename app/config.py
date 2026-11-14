@@ -5,15 +5,19 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+
 @dataclass(frozen=True)
 class Settings:
     openai_api_key: str
-    discord_bot_token: str
     database_url: str
-    discord_allowed_user_id: str | None
+    trilium_etapi_url: str
+    trilium_etapi_token: str
+    trilium_parent_note_id: str
     openai_model: str = "gpt-4o-mini"
-    allowed_channel_id: str | None = None
     max_transcript_chars: int | None = None
+    trilium_ui_url: str | None = None
+    watch_ui_host: str = "0.0.0.0"
+    watch_ui_port: int = 3004
 
 
 def _required(name: str) -> str:
@@ -33,6 +37,11 @@ def _optional_int(name: str) -> int | None:
         raise RuntimeError(f"Environment variable {name} must be an integer") from exc
 
 
+def _optional_int_with_default(name: str, default: int) -> int:
+    value = _optional_int(name)
+    return default if value is None else value
+
+
 def load_environment_file() -> None:
     dotenv = importlib.import_module("dotenv")
     dotenv.load_dotenv(dotenv_path=Path(".env"), override=False)
@@ -42,10 +51,13 @@ def load_settings() -> Settings:
     load_environment_file()
     return Settings(
         openai_api_key=_required("OPENAI_API_KEY"),
-        discord_bot_token=_required("DISCORD_BOT_TOKEN"),
         database_url=_required("DATABASE_URL"),
-        discord_allowed_user_id=os.getenv("DISCORD_ALLOWED_USER_ID", "").strip() or None,
+        trilium_etapi_url=_required("TRILIUM_ETAPI_URL"),
+        trilium_etapi_token=_required("TRILIUM_ETAPI_TOKEN"),
+        trilium_parent_note_id=_required("TRILIUM_PARENT_NOTE_ID"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini",
-        allowed_channel_id=os.getenv("DISCORD_ALLOWED_CHANNEL_ID", "").strip() or None,
         max_transcript_chars=_optional_int("YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS"),
+        trilium_ui_url=os.getenv("TRILIUM_UI_URL", "").strip() or None,
+        watch_ui_host=os.getenv("WATCH_UI_HOST", "0.0.0.0").strip() or "0.0.0.0",
+        watch_ui_port=_optional_int_with_default("WATCH_UI_PORT", 3004),
     )

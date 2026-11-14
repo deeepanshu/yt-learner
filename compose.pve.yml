@@ -2,7 +2,7 @@ services:
   migrate:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
-  discord:
+  web:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
   worker:

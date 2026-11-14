@@ -1,18 +1,16 @@
 # yt-learner
 
-Discord-first MVP for turning YouTube URLs and watched YouTube channel uploads into structured markdown learning notes.
+Turns watched YouTube channel uploads into structured markdown learning notes in Trilium.
 
 ## Setup
 
 1. Install `uv`.
 2. Create the project environment with `uv sync`.
 3. Copy `.env.example` to `.env` and fill in the required values.
-4. In the Discord developer portal, enable the `MESSAGE CONTENT INTENT` for the bot if you want plain URL messages to work.
-5. Invite the bot to your server.
-6. Run migrations with `uv run yt-learner-migrate`.
-7. Run the bot with `uv run yt-learner-discord`.
-8. Run the worker with `uv run yt-learner-worker`.
-9. Run the scheduler manually with `uv run yt-learner-scheduler` when you want a one-off poll during development.
+4. Run migrations with `uv run yt-learner-migrate`.
+5. Run the watch UI with `uv run yt-learner-web`.
+6. Run the worker with `uv run yt-learner-worker`.
+7. Run the scheduler manually with `uv run yt-learner-scheduler` when you want a one-off poll during development.
 
 Local tests need Postgres:
 
@@ -27,8 +25,8 @@ Docker Compose is the default deployment path.
 
 The deployed runtime keeps the current process split:
 
-- `discord`: accepts Discord messages and slash commands, validates input, and enqueues jobs
-- `worker`: claims queued jobs from Postgres, runs the extraction pipeline, and posts results back to Discord
+- `web`: Tailscale/LAN UI for adding and removing YouTube channel watches. Do not put this on Cloudflare Tunnel.
+- `worker`: claims queued jobs from Postgres, runs the extraction pipeline, and publishes notes to Trilium
 - `scheduler`: waits until `8:00 AM` in `Asia/Bangkok`, runs one watched-channel poll, enqueues new jobs, and waits for the next day
 - `migrate`: one-shot schema apply (`docker compose --profile migrate run --rm migrate`)
 
@@ -74,34 +72,34 @@ Also set `RPI_DEPLOY_SECRET` on `deeepanshu/yt-learner` to match the Pi manager.
 
 ## Runtime Model
 
-The app still has two long-lived app processes and one scheduled process:
+The app has two long-lived app processes and one scheduled process:
 
-- `yt-learner-discord`: accepts Discord messages and slash commands, validates input, and enqueues jobs
-- `yt-learner-worker`: claims queued jobs from Postgres, runs the extraction pipeline, and posts the result back to Discord
+- `yt-learner-web`: watch-management UI
+- `yt-learner-worker`: claims queued jobs from Postgres, runs the extraction pipeline, and publishes the note to Trilium
 - `yt-learner-scheduler`: runs channel discovery on a daily wall-clock schedule and enqueues new work
 
-In normal deployment all three containers should be running. If only the bot is running, jobs will queue but never complete. If only the worker is running, existing queued jobs will still process, but you will not be able to add or remove watches from Discord. If the scheduler is not running, watched channels will stop enqueueing new uploads.
+In normal deployment all three containers should be running. If only the watch UI is running, watches can change but jobs will never complete. If only the worker is running, existing queued jobs will still process, but you will not be able to add or remove watches. If the scheduler is not running, watched channels will stop enqueueing new uploads.
 
-Access policy:
-
-- anyone in a server where the bot is installed can use `/learn` or plain YouTube URL messages
-- direct messages to the bot are ignored
-- if `DISCORD_ALLOWED_CHANNEL_ID` is set, manual learning requests are limited to that one channel
-- watched channel management is server-only and requires Discord `Manage Server` permission
+The watch UI binds to port `3004` and is for Tailscale/LAN use only.
 
 ## Environment
 
 Required values in `.env`:
 
 - `OPENAI_API_KEY`
-- `DISCORD_BOT_TOKEN`
 - `DATABASE_URL`
+- `TRILIUM_ETAPI_URL`
+- `TRILIUM_ETAPI_TOKEN`
+- `TRILIUM_PARENT_NOTE_ID`
 
 Optional values:
 
-- `DISCORD_ALLOWED_USER_ID` (legacy; not required for server-wide access)
+- `TRILIUM_UI_URL`
+- `WATCH_UI_HOST`
+- `WATCH_UI_PORT`
+- `WATCH_UI_BIND_HOST`
+- `WATCH_UI_HOST_PORT`
 - `OPENAI_MODEL`
-- `DISCORD_ALLOWED_CHANNEL_ID`
 - `YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS`
 - `OTEL_EXPORTER_OTLP_ENDPOINT`
 - `OTEL_EXPORTER_OTLP_PROTOCOL`
@@ -168,22 +166,18 @@ In ChatGPT developer mode, add the URL above as a custom MCP endpoint and select
 
 The same endpoint works with any remote MCP host that supports Streamable HTTP without authentication.
 
-English transcripts only, same constraint as the Discord worker. Videos without captions, private/unavailable videos, or YouTube-blocked requests return a tool error.
+English transcripts only, same constraint as the worker. Videos without captions, private/unavailable videos, or YouTube-blocked requests return a tool error.
 
 ## Watched Channels
 
-Use Discord slash commands to manage watched YouTube channels:
-
-- `/watch add <youtube_channel> <discord_channel>`
-- `/watch list`
-- `/watch remove <youtube_channel_or_watch_id>`
+Open the watch UI (`http://<host>:3004` on Tailscale/LAN) to add or remove YouTube channels.
 
 Behavior:
 
 - the first sync for a newly watched YouTube channel is bootstrap-only and does not backfill existing uploads
 - later uploads are discovered from the YouTube channel feed and enqueued once
 - discovered video ids are stored in Postgres, so restarts do not re-enqueue the same upload
-- each watched YouTube channel has its own Discord destination, and multiple watched channels may share the same destination
+- notes always go to Trilium under `TRILIUM_PARENT_NOTE_ID`
 
 The scheduler container runs discovery once per day at `8:00 AM` Bangkok time. It only enqueues jobs; `yt-learner-worker` still needs to be running to process them.
 
@@ -199,7 +193,7 @@ Supported watch inputs:
 
 Service names:
 
-- `yt-learner-discord`
+- `yt-learner-web`
 - `yt-learner-scheduler`
 - `yt-learner-worker`
 
@@ -222,23 +216,22 @@ The dashboard `grafana/dashboards/yt-learner.json` is copied into Grafana on dep
 - Add dev dependencies with `uv add --dev <package>`.
 - Validate config locally with `make check`.
 - Run the local transcript MCP server with `make run-mcp`.
-- Run both bot and worker locally with `make run-all`.
+- Run watch UI and worker locally with `make run-all`.
 - Apply migrations with `uv run yt-learner-migrate`.
 - Build the Docker image with `make docker-build`.
 - Start the Docker deployment with `make docker-up`.
 
 ## Current Scope
 
-- Manual YouTube URL processing through Discord messages or `/learn`
-- Watched YouTube channel scheduling through `/watch`
+- Watched YouTube channel scheduling through the watch UI
 - Postgres-backed durable job queue in `app.job_queue`
 - Postgres-backed watch, source, and note persistence
 - MCP transcript service: local stdio plus Cloudflare Access-protected Streamable HTTP for ChatGPT
-- Notes stored as `learning_records.markdown` and sent to Discord as attachments
+- Notes stored as `learning_records.markdown` and published to Trilium via ETAPI
 
 ## Notes
 
 - Existing notes are reused by video ID.
 - If transcript fetch succeeds but OpenAI extraction fails, the transcript is stored in `debug_artifacts`.
-- Discord replies immediately with a queued job ID for manual requests; the worker posts the completion or failure message later.
 - Channel watches use public YouTube feeds in v1 and do not require a YouTube Data API key.
+- Create an ETAPI token in Trilium (Options → ETAPI) and a parent notebook, then set `TRILIUM_ETAPI_TOKEN` and `TRILIUM_PARENT_NOTE_ID`. Use the LAN URL `http://trilium.lab:8080/etapi`, not the public site.

@@ -1,4 +1,4 @@
-.PHONY: sync test test-db check run-bot run-worker run-scheduler run-mcp run-mcp-http run-all \
+.PHONY: sync test test-db check run-web run-worker run-scheduler run-mcp run-mcp-http run-all \
 	docker-build docker-up docker-down docker-restart docker-logs docker-ps docker-run-scheduler
 
 TEST_DATABASE_URL ?= postgres://yt_learner:yt_learner@127.0.0.1:55432/yt_learner_test
@@ -13,10 +13,10 @@ test: test-db
 	TEST_DATABASE_URL=$(TEST_DATABASE_URL) uv run pytest
 
 check:
-	uv run yt-learner-discord --check-config
+	uv run yt-learner-web --check-config
 
-run-bot:
-	uv run yt-learner-discord
+run-web:
+	uv run yt-learner-web
 
 run-worker:
 	uv run yt-learner-worker
@@ -31,10 +31,10 @@ run-mcp-http:
 	uv run python -m app.mcp_server --http
 
 run-all:
-	(sh -c 'trap "kill 0" INT TERM EXIT; $(MAKE) run-bot & $(MAKE) run-worker & wait')
+	(sh -c 'trap "kill 0" INT TERM EXIT; $(MAKE) run-web & $(MAKE) run-worker & wait')
 
 docker-build:
-	docker compose build discord
+	docker compose build web
 
 docker-up:
 	docker compose --profile migrate run --rm migrate

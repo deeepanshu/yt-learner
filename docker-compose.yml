@@ -21,11 +21,19 @@ services:
     command: yt-learner-migrate
     restart: "no"
 
-  discord:
+  web:
     <<: *app-service
     build:
       context: .
-    command: yt-learner-discord
+    command: yt-learner-web
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel.lab:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=prod
+      WATCH_UI_HOST: "0.0.0.0"
+      WATCH_UI_PORT: "3004"
+    ports:
+      - "${WATCH_UI_BIND_HOST:-0.0.0.0}:${WATCH_UI_HOST_PORT:-3004}:3004"
 
   worker:
     <<: *app-service

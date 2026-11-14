@@ -5,22 +5,18 @@ def test_add_list_and_deactivate_subscription(database_url) -> None:
     repository = WatchRepository(database_url)
 
     first = repository.add_or_update_subscription(
-        guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
         youtube_channel_ref="https://www.youtube.com/channel/UC12345678901234567890",
         youtube_channel_title="AI Channel",
-        discord_channel_id=1001,
     )
     second = repository.add_or_update_subscription(
-        guild_id="guild-1",
         youtube_channel_id="UC09876543210987654321",
         youtube_channel_ref="https://www.youtube.com/channel/UC09876543210987654321",
         youtube_channel_title="Robotics Channel",
-        discord_channel_id=1002,
     )
 
-    listed = repository.list_subscriptions(guild_id="guild-1")
-    removed = repository.deactivate_subscription_by_id(guild_id="guild-1", subscription_id=first.id)
+    listed = repository.list_subscriptions()
+    removed = repository.deactivate_subscription_by_id(subscription_id=first.id)
     active = repository.get_active_subscriptions()
 
     assert [subscription.id for subscription in listed] == [first.id, second.id]
@@ -29,42 +25,33 @@ def test_add_list_and_deactivate_subscription(database_url) -> None:
     assert [subscription.id for subscription in active] == [second.id]
 
 
-def test_reactivate_existing_subscription_updates_route(database_url) -> None:
+def test_reactivate_existing_subscription_updates_title(database_url) -> None:
     repository = WatchRepository(database_url)
 
     original = repository.add_or_update_subscription(
-        guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
         youtube_channel_ref="https://www.youtube.com/channel/UC12345678901234567890",
         youtube_channel_title="AI Channel",
-        discord_channel_id=1001,
     )
-    repository.deactivate_subscription_by_channel_id(
-        guild_id="guild-1",
-        youtube_channel_id="UC12345678901234567890",
-    )
+    repository.deactivate_subscription_by_channel_id(youtube_channel_id="UC12345678901234567890")
 
     updated = repository.add_or_update_subscription(
-        guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
         youtube_channel_ref="https://www.youtube.com/channel/UC12345678901234567890",
-        youtube_channel_title="AI Channel",
-        discord_channel_id=2002,
+        youtube_channel_title="AI Channel Reloaded",
     )
 
     assert updated.id == original.id
-    assert updated.discord_channel_id == 2002
+    assert updated.youtube_channel_title == "AI Channel Reloaded"
     assert updated.is_active is True
 
 
 def test_record_discovered_video_is_idempotent(database_url) -> None:
     repository = WatchRepository(database_url)
     subscription = repository.add_or_update_subscription(
-        guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
         youtube_channel_ref="https://www.youtube.com/channel/UC12345678901234567890",
         youtube_channel_title="AI Channel",
-        discord_channel_id=1001,
     )
 
     first = repository.record_discovered_video(

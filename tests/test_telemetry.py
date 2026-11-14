@@ -27,7 +27,7 @@ def test_configure_logging_skips_otel_when_endpoint_missing(monkeypatch) -> None
     monkeypatch.setattr(telemetry, "_configured_logs_endpoint", lambda: None)
     monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: basic_config_calls.append(kwargs))
 
-    telemetry.configure_logging("yt-learner-discord")
+    telemetry.configure_logging("yt-learner-web")
 
     assert basic_config_calls == [{"level": logging.INFO}]
 

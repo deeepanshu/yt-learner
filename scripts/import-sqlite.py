@@ -98,25 +98,22 @@ def import_sqlite(sqlite_path: Path, database_url: str) -> None:
             inserted = pg.execute(
                 """
                 INSERT INTO watched_channels (
-                    guild_id, youtube_channel_id, youtube_channel_ref, youtube_channel_title,
-                    discord_channel_id, is_active, bootstrap_completed_at, created_at, updated_at
+                    youtube_channel_id, youtube_channel_ref, youtube_channel_title,
+                    is_active, bootstrap_completed_at, created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (guild_id, youtube_channel_id) DO UPDATE SET
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (youtube_channel_id) DO UPDATE SET
                     youtube_channel_ref = excluded.youtube_channel_ref,
                     youtube_channel_title = excluded.youtube_channel_title,
-                    discord_channel_id = excluded.discord_channel_id,
                     is_active = excluded.is_active,
                     bootstrap_completed_at = excluded.bootstrap_completed_at,
                     updated_at = excluded.updated_at
                 RETURNING id
                 """,
                 (
-                    row["guild_id"],
                     row["youtube_channel_id"],
                     row["youtube_channel_ref"],
                     row["youtube_channel_title"],
-                    int(row["discord_channel_id"]),
                     bool(row["is_active"]),
                     _parse_timestamp(row["bootstrap_completed_at"]),
                     _parse_timestamp(row["created_at"]) or datetime.now(timezone.utc),
@@ -155,33 +152,7 @@ def import_sqlite(sqlite_path: Path, database_url: str) -> None:
                 ),
             )
 
-        try:
-            thread_rows = sqlite.execute("SELECT * FROM discord_threads ORDER BY id").fetchall()
-        except sqlite3.OperationalError:
-            thread_rows = []
-        for row in thread_rows:
-            pg.execute(
-                """
-                INSERT INTO discord_threads (
-                    guild_id, parent_channel_id, purpose, source_type, source_key,
-                    thread_id, title, created_at, updated_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (guild_id, parent_channel_id, purpose, source_type, source_key)
-                DO NOTHING
-                """,
-                (
-                    row["guild_id"],
-                    int(row["parent_channel_id"]),
-                    row["purpose"],
-                    row["source_type"],
-                    row["source_key"],
-                    int(row["thread_id"]),
-                    row["title"],
-                    _parse_timestamp(row["created_at"]) or datetime.now(timezone.utc),
-                    _parse_timestamp(row["updated_at"]) or datetime.now(timezone.utc),
-                ),
-            )
+
 
         try:
             job_rows = sqlite.execute("SELECT * FROM jobs ORDER BY id").fetchall()

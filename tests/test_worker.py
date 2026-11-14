@@ -6,6 +6,7 @@ from app.channel_watches import WatchRepository
 from app.config import Settings
 from app.job_queue import JobQueue
 from app.pipeline import ProcessedVideo
+from app.trilium import PublishedNote, TriliumError
 from app.worker import WorkerService
 
 
@@ -17,51 +18,44 @@ class StubProcessor:
         return self.result
 
 
-class FakePartialMessage:
-    def __init__(self, channel: "FakeChannel", message_id: int) -> None:
-        self.channel = channel
-        self.id = message_id
+class FakePublisher:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.videos: list[ProcessedVideo] = []
 
-    async def edit(self, *, content=None, attachments=None):
-        file = attachments[0] if attachments else None
-        self.channel.messages.append((content, file, None, None))
+    def publish_video_notes(self, result: ProcessedVideo) -> PublishedNote:
+        if self.fail:
+            raise TriliumError("etapi down")
+        self.videos.append(result)
+        return PublishedNote(note_id="note1", url="https://trilium.example/#note1")
 
-
-class FakeChannel:
-    def __init__(self) -> None:
-        self.messages = []
-
-    def get_partial_message(self, message_id: int):
-        return FakePartialMessage(self, message_id)
-
-    async def send(self, content=None, file=None, reference=None, mention_author=None):
-        self.messages.append((content, file, reference, mention_author))
+    def publish_question_answer(self, result, *, question: str) -> PublishedNote:
+        raise AssertionError("question publish should not run")
 
 
-class FakeDiscordClient:
-    def __init__(self, channel: FakeChannel) -> None:
-        self.channel = channel
+def dummy_settings(database_url: str) -> Settings:
+    return Settings(
+        openai_api_key="key",
+        database_url=database_url,
+        trilium_etapi_url="http://trilium.example/etapi",
+        trilium_etapi_token="token",
+        trilium_parent_note_id="parentNote",
+        trilium_ui_url="https://trilium.example",
+    )
 
-    async def fetch_channel(self, channel_id: int):
-        return self.channel
 
-
-def test_worker_marks_scheduled_video_as_indexed(database_url) -> None:
+def test_worker_publishes_notes_to_trilium(database_url) -> None:
     repository = WatchRepository(database_url)
     queue = JobQueue(database_url)
     subscription = repository.add_or_update_subscription(
-        guild_id="guild-1",
         youtube_channel_id="UC12345678901234567890",
         youtube_channel_ref="https://www.youtube.com/channel/UC12345678901234567890",
         youtube_channel_title="AI Channel",
-        discord_channel_id=1001,
     )
     job = queue.enqueue_summarize_video(
         video_url="https://www.youtube.com/watch?v=abc123xyz",
         requested_by="youtube-channel-scheduler",
         source="youtube_channel_scheduler",
-        reply_channel_id=subscription.discord_channel_id,
-        reply_message_id=2222,
     )
     repository.record_discovered_video(
         subscription_id=subscription.id,
@@ -87,28 +81,55 @@ def test_worker_marks_scheduled_video_as_indexed(database_url) -> None:
             reused_existing=False,
         )
     )
-    channel = FakeChannel()
+    publisher = FakePublisher()
     service = WorkerService(
-        settings=Settings(
-            openai_api_key="key",
-            discord_bot_token="token",
-            database_url=database_url,
-            discord_allowed_user_id=None,
-        ),
+        settings=dummy_settings(database_url),
         queue=queue,
         processor=processor,
-        discord_client=FakeDiscordClient(channel),
+        note_publisher=publisher,
         watch_repository=repository,
     )
 
     completed = run_async(service.run_next_job())
 
     assert completed is not None
+    assert completed.status == "done"
     assert completed.learning_record_id == 77
     discovered = repository.list_discovered_videos(subscription_id=subscription.id)
     assert discovered[0].learning_record_id == 77
-    assert channel.messages[0][0] == "Done: Demo"
-    assert channel.messages[0][1] is not None
+    assert publisher.videos[0].markdown == "# Learned"
+
+
+def test_worker_fails_job_when_trilium_publish_fails(database_url) -> None:
+    queue = JobQueue(database_url)
+    job = queue.enqueue_summarize_video(
+        video_url="https://www.youtube.com/watch?v=abc123xyz",
+        requested_by="youtube-channel-scheduler",
+        source="youtube_channel_scheduler",
+    )
+    processor = StubProcessor(
+        result=ProcessedVideo(
+            learning_record_id=77,
+            video_id="abc123xyz",
+            title="Demo",
+            url=job.video_url,
+            filename="result.md",
+            markdown="# Learned",
+            reused_existing=False,
+        )
+    )
+    service = WorkerService(
+        settings=dummy_settings(database_url),
+        queue=queue,
+        processor=processor,
+        note_publisher=FakePublisher(fail=True),
+    )
+
+    completed = run_async(service.run_next_job())
+
+    assert completed is not None
+    assert completed.status == "failed"
+    assert completed.error == "I could not save the notes to Trilium. Please try again later."
 
 
 def run_async(awaitable):

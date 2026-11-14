@@ -86,7 +86,8 @@ The watch UI is served at `/ui` on port `3004`. Public hostname is `https://ytle
 
 Required values in `.env`:
 
-- `OPENAI_API_KEY`
+- `OLLAMA_API_KEY`
+- `OLLAMA_MODEL`
 - `DATABASE_URL`
 - `TRILIUM_ETAPI_URL`
 - `TRILIUM_ETAPI_TOKEN`
@@ -99,7 +100,7 @@ Optional values:
 - `WATCH_UI_PORT`
 - `WATCH_UI_BIND_HOST`
 - `WATCH_UI_HOST_PORT`
-- `OPENAI_MODEL`
+- `OLLAMA_BASE_URL`
 - `YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS`
 - `OTEL_EXPORTER_OTLP_ENDPOINT`
 - `OTEL_EXPORTER_OTLP_PROTOCOL`
@@ -232,6 +233,6 @@ The dashboard `grafana/dashboards/yt-learner.json` is copied into Grafana on dep
 ## Notes
 
 - Existing notes are reused by video ID.
-- If transcript fetch succeeds but OpenAI extraction fails, the transcript is stored in `debug_artifacts`.
+- If transcript fetch succeeds but Ollama extraction fails, the transcript is stored in `debug_artifacts`.
 - Channel watches use public YouTube feeds in v1 and do not require a YouTube Data API key.
 - Create an ETAPI token in Trilium (Options → ETAPI) and a parent notebook, then set `TRILIUM_ETAPI_TOKEN` and `TRILIUM_PARENT_NOTE_ID`. Use the LAN URL `http://trilium.lab:8080/etapi`, not the public site.

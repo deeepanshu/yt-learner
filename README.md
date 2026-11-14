@@ -1,6 +1,6 @@
 # yt-learner
 
-Turns watched YouTube channel uploads into structured markdown learning notes in Trilium.
+Turns watched YouTube channel uploads into structured markdown learning notes in Outline.
 
 ## Setup
 
@@ -26,7 +26,7 @@ Docker Compose is the default deployment path.
 The deployed runtime keeps the current process split:
 
 - `web`: Tailscale/LAN UI for adding and removing YouTube channel watches. Do not put this on Cloudflare Tunnel.
-- `worker`: claims queued jobs from Postgres, runs the extraction pipeline, and publishes notes to Trilium
+- `worker`: claims queued jobs from Postgres, runs the extraction pipeline, and publishes notes to Outline
 - `scheduler`: waits until `8:00 AM` in `Asia/Bangkok`, runs one watched-channel poll, enqueues new jobs, and waits for the next day
 - `migrate`: one-shot schema apply (`docker compose --profile migrate run --rm migrate`)
 
@@ -75,7 +75,7 @@ Also set `RPI_DEPLOY_SECRET` on `deeepanshu/yt-learner` to match the Pi manager.
 The app has two long-lived app processes and one scheduled process:
 
 - `yt-learner-web`: watch-management UI
-- `yt-learner-worker`: claims queued jobs from Postgres, runs the extraction pipeline, and publishes the note to Trilium
+- `yt-learner-worker`: claims queued jobs from Postgres, runs the extraction pipeline, and publishes the note to Outline
 - `yt-learner-scheduler`: runs channel discovery on a daily wall-clock schedule and enqueues new work
 
 In normal deployment all three containers should be running. If only the watch UI is running, watches can change but jobs will never complete. If only the worker is running, existing queued jobs will still process, but you will not be able to add or remove watches. If the scheduler is not running, watched channels will stop enqueueing new uploads.
@@ -89,13 +89,13 @@ Required values in `.env`:
 - `OLLAMA_API_KEY`
 - `OLLAMA_MODEL`
 - `DATABASE_URL`
-- `TRILIUM_ETAPI_URL`
-- `TRILIUM_ETAPI_TOKEN`
-- `TRILIUM_PARENT_NOTE_ID`
+- `OUTLINE_URL`
+- `OUTLINE_API_KEY`
+- `OUTLINE_COLLECTION_ID`
 
 Optional values:
 
-- `TRILIUM_UI_URL`
+- `OUTLINE_UI_URL`
 - `WATCH_UI_HOST`
 - `WATCH_UI_PORT`
 - `WATCH_UI_BIND_HOST`
@@ -175,11 +175,11 @@ Open `https://ytlearner.deepanshujain.me/ui` (Cloudflare Access) or `http://<hos
 
 Behavior:
 
-- Learn queues one video immediately; the worker calls Ollama and writes the note to Trilium under `Youtube Learning / {channel name}`
+- Learn queues one video immediately; the worker calls Ollama and writes the note to Outline under `Youtube Learning / {channel name}`
 - the first sync for a newly watched YouTube channel is bootstrap-only and does not backfill existing uploads
 - later uploads are discovered from the YouTube channel feed and enqueued once
 - discovered video ids are stored in Postgres, so restarts do not re-enqueue the same upload
-- notes always go to Trilium under `TRILIUM_PARENT_NOTE_ID`
+- existing Outline documents are reused by an embedded video-id marker
 
 The scheduler container runs discovery once per day at `8:00 AM` Bangkok time. It only enqueues jobs; `yt-learner-worker` still needs to be running to process them.
 
@@ -229,11 +229,11 @@ The dashboard `grafana/dashboards/yt-learner.json` is copied into Grafana on dep
 - Postgres-backed durable job queue in `app.job_queue`
 - Postgres-backed watch, source, and note persistence
 - MCP transcript service: local stdio plus Cloudflare Access-protected Streamable HTTP for ChatGPT
-- Notes stored as `learning_records.markdown` and published to Trilium via ETAPI
+- Notes stored as `learning_records.markdown` and published to Outline via its API
 
 ## Notes
 
 - Existing notes are reused by video ID.
 - If transcript fetch succeeds but Ollama extraction fails, the transcript is stored in `debug_artifacts`.
 - Channel watches use public YouTube feeds in v1 and do not require a YouTube Data API key.
-- Create an ETAPI token in Trilium (Options → ETAPI) and a parent notebook, then set `TRILIUM_ETAPI_TOKEN` and `TRILIUM_PARENT_NOTE_ID`. Use the LAN URL `http://trilium.lab:8080/etapi`, not the public site.
+- Configure an Outline personal API key in `OUTLINE_API_KEY`, set `OUTLINE_COLLECTION_ID` to the target collection URL ID or UUID, and use the LAN URL `http://outline.lab:3000`. Keep the key in Komodo secrets, not Git.

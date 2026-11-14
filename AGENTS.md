@@ -6,12 +6,12 @@ This file is the working guide for coding agents making changes in this reposito
 
 ## Project Overview
 
-`yt-learner` turns watched YouTube channel uploads into structured markdown learning notes in Trilium.
+`yt-learner` turns watched YouTube channel uploads into structured markdown learning notes in Outline.
 
 The runtime is split into two long-lived processes and one scheduled process:
 
 - `yt-learner-web` serves the Tailscale/LAN watch-management UI.
-- `yt-learner-worker` claims queued jobs from Postgres, runs the extraction pipeline, and publishes notes to Trilium.
+- `yt-learner-worker` claims queued jobs from Postgres, runs the extraction pipeline, and publishes notes to Outline.
 - `yt-learner-scheduler` polls watched YouTube channels on a wall-clock schedule.
 
 Normal behavior depends on web, worker, and scheduler running. If only the watch UI is running, watches can change but jobs will not complete.
@@ -25,7 +25,7 @@ Normal behavior depends on web, worker, and scheduler running. If only the watch
 - `app/db.py` and `app/migrations/` contain connection helpers and SQL migrations.
 - `app/pipeline.py` contains the shared processing pipeline.
 - `app/storage.py` stores sources, notes, and debug transcripts in Postgres.
-- `app/trilium.py` publishes notes to TriliumNext ETAPI.
+- `app/outline.py` publishes notes to Outline's API.
 - `app/mcp_server.py` is the local stdio MCP server for YouTube transcripts.
 - `tests/` contains pytest coverage for the current behavior.
 - `docs/adr/` contains architectural decisions.
@@ -110,13 +110,13 @@ Required values:
 - `OLLAMA_API_KEY`
 - `OLLAMA_MODEL`
 - `DATABASE_URL`
-- `TRILIUM_ETAPI_URL`
-- `TRILIUM_ETAPI_TOKEN`
-- `TRILIUM_PARENT_NOTE_ID`
+- `OUTLINE_URL`
+- `OUTLINE_API_KEY`
+- `OUTLINE_COLLECTION_ID`
 
 Common optional values:
 
-- `TRILIUM_UI_URL`
+- `OUTLINE_UI_URL`
 - `WATCH_UI_HOST`
 - `WATCH_UI_PORT`
 - `OLLAMA_BASE_URL`
@@ -132,7 +132,7 @@ Common optional values:
 - Prefer extending existing modules over introducing duplicate abstractions.
 - Treat the web UI, queue, worker, and pipeline boundaries as intentional unless the task explicitly changes them.
 - Postgres is the only application database. Do not reintroduce SQLite.
-- Notes live in `learning_records.markdown` and are published to Trilium. Do not write note files to disk.
+- Notes live in `learning_records.markdown` and are published to Outline. Do not write note files to disk.
 - Add or update tests when behavior changes. Tests require Postgres (`make test`).
 - Keep setup and run instructions aligned with `README.md`, `Makefile`, and `pyproject.toml`.
 

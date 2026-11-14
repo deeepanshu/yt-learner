@@ -13,12 +13,12 @@ class Settings:
     ollama_api_key: str
     ollama_model: str
     database_url: str
-    trilium_etapi_url: str
-    trilium_etapi_token: str
-    trilium_parent_note_id: str
+    outline_url: str
+    outline_api_key: str
+    outline_collection_id: str
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
     max_transcript_chars: int | None = None
-    trilium_ui_url: str | None = None
+    outline_ui_url: str | None = None
     watch_ui_host: str = "0.0.0.0"
     watch_ui_port: int = 3004
 
@@ -55,13 +55,12 @@ def load_settings() -> Settings:
     return Settings(
         ollama_api_key=_required("OLLAMA_API_KEY"),
         ollama_model=_required("OLLAMA_MODEL"),
-        database_url=_required("DATABASE_URL"),
-        trilium_etapi_url=_required("TRILIUM_ETAPI_URL"),
-        trilium_etapi_token=_required("TRILIUM_ETAPI_TOKEN"),
-        trilium_parent_note_id=_required("TRILIUM_PARENT_NOTE_ID"),
+        outline_url=_required("OUTLINE_URL"),
+        outline_api_key=_required("OUTLINE_API_KEY"),
+        outline_collection_id=_required("OUTLINE_COLLECTION_ID"),
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL).strip() or DEFAULT_OLLAMA_BASE_URL,
         max_transcript_chars=_optional_int("YOUTUBE_LEARNER_MAX_TRANSCRIPT_CHARS"),
-        trilium_ui_url=os.getenv("TRILIUM_UI_URL", "").strip() or None,
+        outline_ui_url=os.getenv("OUTLINE_UI_URL", "").strip() or None,
         watch_ui_host=os.getenv("WATCH_UI_HOST", "0.0.0.0").strip() or "0.0.0.0",
         watch_ui_port=_optional_int_with_default("WATCH_UI_PORT", 3004),
     )

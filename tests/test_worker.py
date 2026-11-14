@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from app.channel_watches import WatchRepository
 from app.config import Settings
 from app.job_queue import JobQueue
+from app.outline import OutlineError, PublishedNote
 from app.pipeline import ProcessedVideo
-from app.trilium import PublishedNote, TriliumError
 from app.worker import WorkerService
 
 
@@ -25,9 +25,9 @@ class FakePublisher:
 
     def publish_video_notes(self, result: ProcessedVideo) -> PublishedNote:
         if self.fail:
-            raise TriliumError("etapi down")
+            raise OutlineError("api down")
         self.videos.append(result)
-        return PublishedNote(note_id="note1", url="https://trilium.example/#note1")
+        return PublishedNote(note_id="note1", url="https://outline.example/doc/note1")
 
     def publish_question_answer(self, result, *, question: str) -> PublishedNote:
         raise AssertionError("question publish should not run")
@@ -38,14 +38,14 @@ def dummy_settings(database_url: str) -> Settings:
         ollama_api_key="key",
         ollama_model="test-model",
         database_url=database_url,
-        trilium_etapi_url="http://trilium.example/etapi",
-        trilium_etapi_token="token",
-        trilium_parent_note_id="parentNote",
-        trilium_ui_url="https://trilium.example",
+        outline_url="http://outline.example",
+        outline_api_key="token",
+        outline_collection_id="collection",
+        outline_ui_url="https://outline.example",
     )
 
 
-def test_worker_publishes_notes_to_trilium(database_url) -> None:
+def test_worker_publishes_notes_to_outline(database_url) -> None:
     repository = WatchRepository(database_url)
     queue = JobQueue(database_url)
     subscription = repository.add_or_update_subscription(
@@ -101,7 +101,7 @@ def test_worker_publishes_notes_to_trilium(database_url) -> None:
     assert publisher.videos[0].markdown == "# Learned"
 
 
-def test_worker_fails_job_when_trilium_publish_fails(database_url) -> None:
+def test_worker_fails_job_when_outline_publish_fails(database_url) -> None:
     queue = JobQueue(database_url)
     job = queue.enqueue_summarize_video(
         video_url="https://www.youtube.com/watch?v=abc123xyz",
@@ -130,7 +130,7 @@ def test_worker_fails_job_when_trilium_publish_fails(database_url) -> None:
 
     assert completed is not None
     assert completed.status == "failed"
-    assert completed.error == "I could not save the notes to Trilium. Please try again later."
+    assert completed.error == "I could not save the notes to Outline. Please try again later."
 
 
 def run_async(awaitable):

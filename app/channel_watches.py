@@ -193,6 +193,22 @@ class WatchRepository:
                 (learning_record_id, queued_job_id),
             )
 
+    def get_youtube_channel_id_for_job(self, *, queued_job_id: int) -> str | None:
+        with connect(self.database_url) as conn:
+            row = conn.execute(
+                """
+                SELECT wc.youtube_channel_id
+                FROM watched_channel_videos AS wcv
+                JOIN watched_channels AS wc ON wc.id = wcv.watched_channel_id
+                WHERE wcv.queued_job_id = %s
+                LIMIT 1
+                """,
+                (queued_job_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row["youtube_channel_id"])
+
     def mark_video_existing_learning(
         self, *, subscription_id: int, video_id: str, learning_record_id: int
     ) -> None:

@@ -83,14 +83,31 @@ class FakeOutline:
         return f"http://{host}:{port}"
 
 
-def make_client(fake: FakeOutline) -> OutlineClient:
+class FakeLinkStore:
+    def __init__(self) -> None:
+        self.links: dict[tuple[str, str, str], str] = {}
+
+    def get(self, *, provider: str, source_type: str, source_key: str):
+        remote_id = self.links.get((provider, source_type, source_key))
+        if remote_id is None:
+            return None
+        return type("Link", (), {"remote_id": remote_id})()
+
+    def save(self, *, provider: str, source_type: str, source_key: str, remote_id: str):
+        self.links[(provider, source_type, source_key)] = remote_id
+
+    def delete(self, *, provider: str, source_type: str, source_key: str) -> None:
+        self.links.pop((provider, source_type, source_key), None)
+
+
+def make_client(fake: FakeOutline, link_store: FakeLinkStore | None = None) -> OutlineClient:
     return OutlineClient(
         base_url=fake.url,
         token="secret",
         collection_id="FuBlx35cfL",
+        link_store=link_store or FakeLinkStore(),
         ui_url="https://outline.example",
     )
-
 
 def video(title: str = "Demo", markdown: str = "# Learned") -> ProcessedVideo:
     return ProcessedVideo(
@@ -109,6 +126,7 @@ def test_find_document_ignores_full_text_search_false_positive() -> None:
         base_url="http://outline.example",
         token="secret",
         collection_id="collection",
+        link_store=FakeLinkStore(),
     )
 
     def fake_request(method: str, body: dict[str, object]) -> dict[str, object]:
@@ -147,12 +165,10 @@ def test_publish_video_notes_creates_channel_and_video() -> None:
     assert note["title"] == "Demo"
     assert note["collectionId"] == "collection-uuid"
     assert note["parentDocumentId"] == "document-1"
-    assert "[Watch on YouTube]" in note["text"]
     assert "# Demo" not in note["text"]
     assert "## Learned" in note["text"]
     assert "Source: https://www.youtube.com/watch?v=abc123xyz89" not in note["text"]
     assert "Processed: 2026-11-15T03:30:12.894889+00:00" not in note["text"]
-    assert "yt-learner-video:abc123xyz89" in note["text"]
     assert fake.forwarded_proto_values == ["https", "https", "https", "https", "https"]
 
 
@@ -167,11 +183,22 @@ def test_publish_video_notes_updates_existing_document() -> None:
     assert "# New" in fake.documents["document-2"]["text"]
 
 
+def test_publish_uses_persisted_link_without_search() -> None:
+    links = FakeLinkStore()
+    with FakeOutline() as fake:
+        first = make_client(fake, links).publish_video_notes(video())
+        second = make_client(fake, links).publish_video_notes(video(title="Updated"))
+
+    assert first.note_id == second.note_id == "document-2"
+    assert len(fake.documents) == 2
+
+
 def test_outline_error_is_raised_for_api_error() -> None:
     client = OutlineClient(
         base_url="http://127.0.0.1:1",
         token="secret",
         collection_id="FuBlx35cfL",
+        link_store=FakeLinkStore(),
     )
     try:
         client.publish_video_notes(video())

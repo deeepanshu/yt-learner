@@ -49,7 +49,7 @@ class ProcessedVideo:
     markdown: str
     reused_existing: bool
     channel_title: str | None = None
-
+    youtube_channel_id: str | None = None
 
 class VideoProcessor:
     def __init__(
@@ -111,6 +111,7 @@ class VideoProcessor:
         video_url: str,
         requested_by: str,
         extra_prompt: str | None = None,
+        youtube_channel_id: str | None = None,
     ) -> ProcessedVideo:
         parsed = parse_youtube_url(video_url)
         prompt_hash = _prompt_hash(extra_prompt)
@@ -140,8 +141,8 @@ class VideoProcessor:
                 markdown=existing.markdown,
                 reused_existing=True,
                 channel_title=channel_title,
+                youtube_channel_id=youtube_channel_id,
             )
-
         title = fetched_title or f"youtube-video-{parsed.video_id}"
 
         transcript = fetch_transcript(parsed.video_id)
@@ -186,4 +187,5 @@ class VideoProcessor:
             markdown=stored.markdown,
             reused_existing=stored.reused_existing,
             channel_title=channel_title,
+            youtube_channel_id=youtube_channel_id,
         )

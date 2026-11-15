@@ -13,10 +13,17 @@ from app.worker import WorkerService
 @dataclass
 class StubProcessor:
     result: ProcessedVideo
+    last_channel_id: str | None = None
 
-    async def process_video(self, video_url: str, requested_by: str, extra_prompt: str | None = None) -> ProcessedVideo:
+    async def process_video(
+        self,
+        video_url: str,
+        requested_by: str,
+        extra_prompt: str | None = None,
+        youtube_channel_id: str | None = None,
+    ) -> ProcessedVideo:
+        self.last_channel_id = youtube_channel_id
         return self.result
-
 
 class FakePublisher:
     def __init__(self, *, fail: bool = False) -> None:
@@ -95,6 +102,7 @@ def test_worker_publishes_notes_to_outline(database_url) -> None:
 
     assert completed is not None
     assert completed.status == "done"
+    assert processor.last_channel_id == subscription.youtube_channel_id
     assert completed.learning_record_id == 77
     discovered = repository.list_discovered_videos(subscription_id=subscription.id)
     assert discovered[0].learning_record_id == 77

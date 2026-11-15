@@ -6,6 +6,12 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.external_links import (
+    OUTLINE_PROVIDER,
+    YOUTUBE_CHANNEL_SOURCE,
+    YOUTUBE_VIDEO_SOURCE,
+    ExternalDocumentLinkStore,
+)
 from app.pipeline import ProcessedVideo
 
 MAX_DOCUMENT_TITLE_CHARS = 100
@@ -27,6 +33,14 @@ class NotePublisher(Protocol):
     def publish_video_notes(self, result: ProcessedVideo) -> PublishedNote: ...
 
 
+class DocumentLinkStore(Protocol):
+    def get(self, *, provider: str, source_type: str, source_key: str): ...
+
+    def save(self, *, provider: str, source_type: str, source_key: str, remote_id: str): ...
+
+    def delete(self, *, provider: str, source_type: str, source_key: str) -> None: ...
+
+
 def format_document_title(title: str) -> str:
     cleaned = " ".join(title.split()) or "YouTube video"
     if len(cleaned) <= MAX_DOCUMENT_TITLE_CHARS:
@@ -37,11 +51,7 @@ def format_document_title(title: str) -> str:
 def _video_text(result: ProcessedVideo) -> str:
     markdown = _remove_duplicate_title_heading(result.markdown, result.title)
     markdown = _remove_generated_metadata(markdown, result.url)
-    return (
-        f"[Watch on YouTube]({result.url})\n\n"
-        f"{markdown}\n\n"
-        f"{VIDEO_MARKER_PREFIX}{result.video_id} -->"
-    )
+    return f"[Watch on YouTube]({result.url})\n\n{markdown}"
 
 
 def _remove_generated_metadata(markdown: str, source_url: str) -> str:
@@ -66,7 +76,7 @@ def _remove_duplicate_title_heading(markdown: str, title: str) -> str:
 
 
 def _channel_text(channel_title: str) -> str:
-    return f"{CHANNEL_MARKER_PREFIX}{channel_title} -->"
+    return ""
 
 
 class OutlineClient:
@@ -76,6 +86,7 @@ class OutlineClient:
         base_url: str,
         token: str,
         collection_id: str,
+        link_store: DocumentLinkStore,
         ui_url: str | None = None,
         timeout_seconds: float = 30.0,
     ) -> None:
@@ -83,24 +94,55 @@ class OutlineClient:
         self.api_base = api_base if api_base.endswith("/api") else f"{api_base}/api"
         self.token = token
         self.collection_id = collection_id
+        self.link_store = link_store
         self.ui_url = ui_url.rstrip("/") if ui_url else None
         self.timeout_seconds = timeout_seconds
         self._resolved_collection_id: str | None = None
 
     def publish_video_notes(self, result: ProcessedVideo) -> PublishedNote:
         collection_id = self._get_collection_id()
-        existing = self._find_document(f"{VIDEO_MARKER_PREFIX}{result.video_id}", collection_id)
         title = format_document_title(result.title)
         text = _video_text(result)
-        if existing is not None:
-            document = self._update_document(existing, title=title, text=text)
-        else:
-            parent_id = self._ensure_channel_document(result.channel_title, collection_id)
-            document = self._create_document(
-                collection_id=collection_id,
-                parent_document_id=parent_id,
-                title=title,
-                text=text,
+        link = self.link_store.get(
+            provider=OUTLINE_PROVIDER,
+            source_type=YOUTUBE_VIDEO_SOURCE,
+            source_key=result.video_id,
+        )
+        existing_id = link.remote_id if link is not None else None
+        if existing_id is not None:
+            try:
+                document = self._update_document(existing_id, title=title, text=text)
+            except OutlineError as exc:
+                if "404" not in str(exc):
+                    raise
+                self.link_store.delete(
+                    provider=OUTLINE_PROVIDER,
+                    source_type=YOUTUBE_VIDEO_SOURCE,
+                    source_key=result.video_id,
+                )
+                existing_id = None
+
+        if existing_id is None:
+            recovered_id = self._find_document(result.url, collection_id)
+            if recovered_id is not None:
+                document = self._update_document(recovered_id, title=title, text=text)
+            else:
+                parent_id = self._ensure_channel_document(
+                    result.youtube_channel_id,
+                    result.channel_title,
+                    collection_id,
+                )
+                document = self._create_document(
+                    collection_id=collection_id,
+                    parent_document_id=parent_id,
+                    title=title,
+                    text=text,
+                )
+            self.link_store.save(
+                provider=OUTLINE_PROVIDER,
+                source_type=YOUTUBE_VIDEO_SOURCE,
+                source_key=result.video_id,
+                remote_id=str(document["id"]),
             )
         return self._published(document)
 
@@ -122,6 +164,23 @@ class OutlineClient:
         raise OutlineError(f"Outline collection not found: {self.collection_id}")
 
     def _find_document(self, query: str, collection_id: str) -> str | None:
+        document = self._find_document_record(query, collection_id)
+        return str(document["id"]) if document is not None else None
+
+    def find_legacy_document(self, marker: str) -> dict[str, object] | None:
+        return self._find_document_record(marker, self._get_collection_id())
+
+    def remove_legacy_marker(self, document: dict[str, object], marker: str) -> None:
+        document_id = document.get("id")
+        if not document_id:
+            raise OutlineError("Outline legacy document missing id")
+        self._update_document(
+            str(document_id),
+            title=str(document.get("title") or "YouTube note"),
+            text=str(document.get("text") or "").replace(marker, "").rstrip(),
+        )
+
+    def _find_document_record(self, query: str, collection_id: str) -> dict[str, object] | None:
         payload = self._request(
             "documents.search",
             {"query": query, "collectionId": collection_id, "limit": 100},
@@ -135,21 +194,60 @@ class OutlineClient:
             document = result.get("document")
             if not isinstance(document, dict) or not document.get("id"):
                 continue
-            if query not in str(document.get("text", "")):
-                continue
-            return str(document["id"])
+            if query in str(document.get("text", "")):
+                return document
         return None
 
-    def _ensure_channel_document(self, channel_title: str | None, collection_id: str) -> str | None:
-        name = " ".join((channel_title or "").split()) or "Unknown channel"
-        marker = f"{CHANNEL_MARKER_PREFIX}{name}"
-        existing = self._find_document(marker, collection_id)
-        if existing is not None:
-            return existing
-        document = self._create_document(
-            collection_id=collection_id,
-            title=format_document_title(name),
-            text=_channel_text(name),
+    def _find_document_by_title(self, title: str, collection_id: str) -> str | None:
+        payload = self._request(
+            "documents.search",
+            {"query": title, "collectionId": collection_id, "limit": 100},
+        )
+        results = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            raise OutlineError("Outline documents.search response missing data")
+        formatted_title = format_document_title(title)
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            document = result.get("document")
+            if not isinstance(document, dict) or not document.get("id"):
+                continue
+            if str(document.get("title", "")) == formatted_title:
+                return str(document["id"])
+        return None
+
+    def _ensure_channel_document(
+        self,
+        channel_id: str | None,
+        channel_title: str | None,
+        collection_id: str,
+    ) -> str | None:
+        name = " ".join((channel_title or "").split())
+        if not name:
+            return None
+        source_key = channel_id or f"title:{name}"
+        link = self.link_store.get(
+            provider=OUTLINE_PROVIDER,
+            source_type=YOUTUBE_CHANNEL_SOURCE,
+            source_key=source_key,
+        )
+        if link is not None:
+            return link.remote_id
+        existing = self._find_document_by_title(name, collection_id) if channel_id is None else None
+        if existing is None:
+            document = self._create_document(
+                collection_id=collection_id,
+                title=format_document_title(name),
+                text="",
+            )
+        else:
+            document = {"id": existing}
+        self.link_store.save(
+            provider=OUTLINE_PROVIDER,
+            source_type=YOUTUBE_CHANNEL_SOURCE,
+            source_key=source_key,
+            remote_id=str(document["id"]),
         )
         return str(document["id"])
 
@@ -232,5 +330,6 @@ def build_outline_client(settings) -> OutlineClient:
         base_url=settings.outline_url,
         token=settings.outline_api_key,
         collection_id=settings.outline_collection_id,
+        link_store=ExternalDocumentLinkStore(settings.database_url),
         ui_url=settings.outline_ui_url,
     )

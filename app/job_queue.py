@@ -51,6 +51,13 @@ class Job:
         return str(raw)
 
     @property
+    def youtube_channel_id(self) -> str | None:
+        raw = self.input_data.get("youtube_channel_id")
+        if raw is None:
+            return None
+        return str(raw)
+
+    @property
     def extra_prompt(self) -> str | None:
         raw = self.input_data.get("extra_prompt")
         if not isinstance(raw, str):
@@ -69,10 +76,13 @@ class JobQueue:
         video_url: str,
         requested_by: str,
         source: str,
+        youtube_channel_id: str | None = None,
         extra_prompt: str | None = None,
         priority: int = 0,
     ) -> Job:
         input_data: dict[str, Any] = {"video_url": video_url}
+        if youtube_channel_id is not None:
+            input_data["youtube_channel_id"] = youtube_channel_id
         if extra_prompt is not None:
             input_data["extra_prompt"] = extra_prompt
         return self._enqueue_job(

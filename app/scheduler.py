@@ -154,6 +154,7 @@ class ChannelScheduler:
 
             job = self.queue.enqueue_summarize_video(
                 video_url=video.video_url,
+                youtube_channel_id=subscription.youtube_channel_id,
                 requested_by=SCHEDULER_REQUESTED_BY,
                 source=SCHEDULER_SOURCE,
             )

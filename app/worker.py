@@ -25,8 +25,8 @@ class ProcessorProtocol(Protocol):
         video_url: str,
         requested_by: str,
         extra_prompt: str | None = None,
+        youtube_channel_id: str | None = None,
     ) -> ProcessedVideo: ...
-
 
 class WorkerService:
     def __init__(
@@ -84,10 +84,16 @@ class WorkerService:
             return failed_job
 
     async def _run_summarize_job(self, job: Job, started: float) -> Job:
+        youtube_channel_id = job.youtube_channel_id
+        if youtube_channel_id is None and self.watch_repository is not None:
+            youtube_channel_id = self.watch_repository.get_youtube_channel_id_for_job(
+                queued_job_id=job.id
+            )
         result = await self.processor.process_video(
             job.video_url,
             requested_by=job.requested_by,
             extra_prompt=job.extra_prompt,
+            youtube_channel_id=youtube_channel_id,
         )
         published = self.note_publisher.publish_video_notes(result)
         done_job = self.queue.mark_done(

@@ -25,6 +25,7 @@ yt-learner-mcp-http = "app.mcp_server:http_main"
 yt-learner-migrate = "app.migrate:main"
 yt-learner-scheduler = "app.scheduler_cli:main"
 yt-learner-scheduler-loop = "app.scheduler_loop:main"
+yt-learner-migrate-outline-links = "app.outline_migrate:main"
 yt-learner-worker = "app.worker:main"
 
 [build-system]

@@ -85,6 +85,20 @@ class OutputStore:
             return None
         return self._row_to_learning_record(row)
 
+    def list_youtube_note_sources(self) -> list[tuple[str, str]]:
+        with connect(self.database_url) as conn:
+            rows = conn.execute(
+                """
+                SELECT s.source_key, s.source_ref
+                FROM learning_records AS lr
+                JOIN sources AS s ON s.id = lr.source_id
+                WHERE s.source_type = %s AND lr.record_type = %s
+                ORDER BY lr.id ASC
+                """,
+                ("youtube_url", "notes"),
+            ).fetchall()
+        return [(str(row["source_key"]), str(row["source_ref"])) for row in rows]
+
     def build_output_filename(
         self,
         *,

@@ -35,11 +35,22 @@ def format_document_title(title: str) -> str:
 
 
 def _video_text(result: ProcessedVideo) -> str:
+    markdown = _remove_duplicate_title_heading(result.markdown, result.title)
     return (
         f"[Watch on YouTube]({result.url})\n\n"
-        f"{result.markdown.rstrip()}\n\n"
+        f"{markdown}\n\n"
         f"{VIDEO_MARKER_PREFIX}{result.video_id} -->"
     )
+
+
+def _remove_duplicate_title_heading(markdown: str, title: str) -> str:
+    body = markdown.lstrip("\n")
+    first_line, separator, remainder = body.partition("\n")
+    normalized_heading = " ".join(first_line.removeprefix("# ").split())
+    normalized_title = " ".join(title.split())
+    if first_line.startswith("# ") and normalized_heading == normalized_title:
+        return remainder.lstrip("\n").rstrip()
+    return markdown.rstrip()
 
 
 def _channel_text(channel_title: str) -> str:

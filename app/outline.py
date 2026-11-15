@@ -110,8 +110,11 @@ class OutlineClient:
             if not isinstance(result, dict):
                 continue
             document = result.get("document")
-            if isinstance(document, dict) and document.get("id"):
-                return str(document["id"])
+            if not isinstance(document, dict) or not document.get("id"):
+                continue
+            if query not in str(document.get("text", "")):
+                continue
+            return str(document["id"])
         return None
 
     def _ensure_channel_document(self, channel_title: str | None, collection_id: str) -> str | None:

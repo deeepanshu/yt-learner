@@ -104,6 +104,27 @@ def video(title: str = "Demo", markdown: str = "# Learned") -> ProcessedVideo:
         channel_title="AI Engineer",
     )
 
+def test_find_document_ignores_full_text_search_false_positive() -> None:
+    client = OutlineClient(
+        base_url="http://outline.example",
+        token="secret",
+        collection_id="collection",
+    )
+
+    def fake_request(method: str, body: dict[str, object]) -> dict[str, object]:
+        assert method == "documents.search"
+        return {
+            "ok": True,
+            "data": [
+                {"document": {"id": "wrong", "text": "A video mentioning AI Engineer"}},
+                {"document": {"id": "right", "text": "<!-- yt-learner-channel:AI Engineer -->"}},
+            ],
+        }
+
+    client._request = fake_request
+
+    assert client._find_document("<!-- yt-learner-channel:AI Engineer -->", "collection") == "right"
+
 
 def test_publish_video_notes_creates_channel_and_video() -> None:
     with FakeOutline() as fake:

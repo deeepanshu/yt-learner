@@ -22,12 +22,23 @@ def main() -> int:
     outline = build_outline_client(settings)
     watches = WatchRepository(settings.database_url)
     store = OutputStore(settings.database_url)
+    documents = outline.list_documents()
+
+    def find_marker(marker: str) -> dict[str, object] | None:
+        return next(
+            (
+                document
+                for document in documents
+                if marker in str(document.get("text", ""))
+            ),
+            None,
+        )
+
     channel_count = 0
     video_count = 0
-
     for channel in watches.list_subscriptions(active_only=False):
         marker = f"{CHANNEL_MARKER_PREFIX}{channel.youtube_channel_title}"
-        document = outline.find_legacy_document(marker)
+        document = find_marker(marker)
         if document is None:
             continue
         links.save(
@@ -41,7 +52,7 @@ def main() -> int:
 
     for video_id, _source_url in store.list_youtube_note_sources():
         marker = f"{VIDEO_MARKER_PREFIX}{video_id}"
-        document = outline.find_legacy_document(marker)
+        document = find_marker(marker)
         if document is None:
             continue
         links.save(

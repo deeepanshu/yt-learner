@@ -198,6 +198,25 @@ class OutlineClient:
                 return document
         return None
 
+    def list_documents(self) -> list[dict[str, object]]:
+        collection_id = self._get_collection_id()
+        documents: list[dict[str, object]] = []
+        offset = 0
+        while True:
+            payload = self._request(
+                "documents.list",
+                {"collectionId": collection_id, "limit": 100, "offset": offset},
+            )
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(data, list):
+                raise OutlineError("Outline documents.list response missing data")
+            documents.extend(document for document in data if isinstance(document, dict))
+            pagination = payload.get("pagination") if isinstance(payload, dict) else None
+            total = int(pagination.get("total", len(documents))) if isinstance(pagination, dict) else len(documents)
+            if len(documents) >= total or not data:
+                return documents
+            offset += len(data)
+
     def _find_document_by_title(self, title: str, collection_id: str) -> str | None:
         payload = self._request(
             "documents.search",

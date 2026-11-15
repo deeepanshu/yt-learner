@@ -86,7 +86,7 @@ class WatchWeb:
             parsed.canonical_url,
         )
         return self._redirect(
-            message=f"Queued job #{job.id} for {parsed.canonical_url}. Worker will call Ollama and write to Trilium."
+            message=f"Queued job #{job.id} for {parsed.canonical_url}. Worker will call Ollama and write to Outline."
         )
 
     async def delete_watch(self, request: Request) -> Response:
@@ -172,7 +172,7 @@ class WatchWeb:
 </head>
 <body>
   <h1>yt-learner watches</h1>
-  <p class="hint">New uploads are learned on the daily scheduler and saved to Trilium. The first poll after adding a channel records the feed and does not backfill. Learn queues one video now.</p>
+  <p class="hint">New uploads are learned on the daily scheduler and saved to Outline. The first poll after adding a channel records the feed and does not backfill. Learn queues one video now.</p>
   {banner}
   <form class="inline" method="post" action="{UI_PREFIX}/learn">
     <label for="url">Learn video</label>

@@ -129,7 +129,14 @@ def test_find_document_ignores_full_text_search_false_positive() -> None:
 def test_publish_video_notes_creates_channel_and_video() -> None:
     with FakeOutline() as fake:
         published = make_client(fake).publish_video_notes(
-            video(markdown="# Demo\n\n## Learned")
+            video(
+                markdown=(
+                    "# Demo\n\n"
+                    "Source: https://www.youtube.com/watch?v=abc123xyz89\n"
+                    "Processed: 2026-11-15T03:30:12.894889+00:00\n\n"
+                    "## Learned"
+                )
+            )
         )
 
     assert published.note_id == "document-2"
@@ -143,6 +150,8 @@ def test_publish_video_notes_creates_channel_and_video() -> None:
     assert "[Watch on YouTube]" in note["text"]
     assert "# Demo" not in note["text"]
     assert "## Learned" in note["text"]
+    assert "Source: https://www.youtube.com/watch?v=abc123xyz89" not in note["text"]
+    assert "Processed: 2026-11-15T03:30:12.894889+00:00" not in note["text"]
     assert "yt-learner-video:abc123xyz89" in note["text"]
     assert fake.forwarded_proto_values == ["https", "https", "https", "https", "https"]
 

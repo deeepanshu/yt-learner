@@ -36,11 +36,23 @@ def format_document_title(title: str) -> str:
 
 def _video_text(result: ProcessedVideo) -> str:
     markdown = _remove_duplicate_title_heading(result.markdown, result.title)
+    markdown = _remove_generated_metadata(markdown, result.url)
     return (
         f"[Watch on YouTube]({result.url})\n\n"
         f"{markdown}\n\n"
         f"{VIDEO_MARKER_PREFIX}{result.video_id} -->"
     )
+
+
+def _remove_generated_metadata(markdown: str, source_url: str) -> str:
+    lines = markdown.lstrip("\n").splitlines()
+    if lines and lines[0].strip() == f"Source: {source_url}":
+        lines.pop(0)
+    if lines and lines[0].strip().startswith("Processed: "):
+        lines.pop(0)
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    return "\n".join(lines).rstrip()
 
 
 def _remove_duplicate_title_heading(markdown: str, title: str) -> str:

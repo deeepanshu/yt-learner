@@ -27,18 +27,22 @@ def test_bootstrap_records_existing_feed_without_queueing(database_url) -> None:
         youtube_channel_ref="https://www.youtube.com/channel/UC12345678901234567890",
         youtube_channel_title="AI Channel",
     )
+    feed_fetcher = FakeFeedFetcher(
+        {
+            subscription.youtube_channel_id: [
+                build_feed_video("old-1", 1),
+                build_feed_video("old-2", 2),
+            ]
+        }
+    )
     scheduler = ChannelScheduler(
         watch_repository=repository,
         queue=queue,
         store=store,
-        feed_fetcher=FakeFeedFetcher(
-            {
-                subscription.youtube_channel_id: [
-                    build_feed_video("old-1", 1),
-                    build_feed_video("old-2", 2),
-                ]
-            }
-        ),
+        feed_fetcher=feed_fetcher,
+        batch_feed_fetcher=lambda channel_ids: {
+            channel_id: feed_fetcher(channel_id) for channel_id in channel_ids
+        },
     )
 
     result = run_async(scheduler.poll_once())

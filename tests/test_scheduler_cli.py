@@ -8,11 +8,12 @@ from app import scheduler_cli
 class FakeScheduler:
     init_args = None
 
-    def __init__(self, *, watch_repository, queue, store) -> None:
+    def __init__(self, *, watch_repository, queue, store, batch_feed_fetcher) -> None:
         type(self).init_args = {
             "watch_repository": watch_repository,
             "queue": queue,
             "store": store,
+            "batch_feed_fetcher": batch_feed_fetcher,
         }
 
     async def poll_once(self):

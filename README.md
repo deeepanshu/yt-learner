@@ -92,6 +92,7 @@ Required values in `.env`:
 - `TRILIUM_ETAPI_URL`
 - `TRILIUM_ETAPI_TOKEN`
 - `TRILIUM_PARENT_NOTE_ID`
+- `YOUTUBE_DATA_API_KEY` (required for watched-channel scheduling)
 
 Optional values:
 
@@ -177,7 +178,7 @@ Behavior:
 
 - Learn queues one video immediately; the worker calls Ollama and writes the note to Trilium under `Youtube Learning / {channel name}`
 - the first sync for a newly watched YouTube channel is bootstrap-only and does not backfill existing uploads
-- later uploads are discovered from the YouTube channel feed and enqueued once
+- later uploads are discovered through the YouTube Data API uploads playlist and enqueued once
 - discovered video ids are stored in Postgres, so restarts do not re-enqueue the same upload
 - notes always go to Trilium under `TRILIUM_PARENT_NOTE_ID`
 
@@ -235,5 +236,5 @@ The dashboard `grafana/dashboards/yt-learner.json` is copied into Grafana on dep
 
 - Existing notes are reused by video ID.
 - If transcript fetch succeeds but Ollama extraction fails, the transcript is stored in `debug_artifacts`.
-- Channel watches use public YouTube feeds in v1 and do not require a YouTube Data API key.
+- Channel watches use the public YouTube Data API uploads playlists and require `YOUTUBE_DATA_API_KEY`.
 - Create an ETAPI token in Trilium (Options → ETAPI) and a parent notebook, then set `TRILIUM_ETAPI_TOKEN` and `TRILIUM_PARENT_NOTE_ID`. Use the LAN URL `http://trilium.lab:8080/etapi`, not the public site.

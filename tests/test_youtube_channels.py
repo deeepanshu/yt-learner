@@ -1,4 +1,78 @@
-from app.youtube_channels import ResolvedYouTubeChannel, YouTubeChannelError, resolve_youtube_channel
+from app.youtube_channels import (
+    ResolvedYouTubeChannel,
+    YouTubeChannelError,
+    YouTubeDataClient,
+    resolve_youtube_channel,
+)
+
+
+def test_data_api_fetch_batches_channels_and_maps_uploads(monkeypatch) -> None:
+    channel_id = "UC12345678901234567890"
+    requests = []
+    client = YouTubeDataClient("test-key")
+
+    def fake_request_json(resource, params):
+        requests.append((resource, params))
+        if resource == "channels":
+            return {
+                "items": [
+                    {
+                        "id": channel_id,
+                        "snippet": {"title": "AI Channel"},
+                        "contentDetails": {
+                            "relatedPlaylists": {"uploads": "UU12345678901234567890"}
+                        },
+                    }
+                ]
+            }
+        return {
+            "items": [
+                {
+                    "snippet": {
+                        "title": "New lesson",
+                        "publishedAt": "2026-06-01T00:00:00Z",
+                    },
+                    "contentDetails": {
+                        "videoId": "video-1",
+                        "videoPublishedAt": "2026-06-01T00:00:00Z",
+                    },
+                }
+            ]
+        }
+
+    monkeypatch.setattr(client, "_request_json", fake_request_json)
+
+    feeds = client.fetch_channel_feeds([channel_id, channel_id])
+
+    assert requests == [
+        (
+            "channels",
+            {"part": "snippet,contentDetails", "id": channel_id},
+        ),
+        (
+            "playlistItems",
+            {
+                "part": "snippet,contentDetails",
+                "playlistId": "UU12345678901234567890",
+                "maxResults": "50",
+            },
+        ),
+    ]
+    assert feeds[channel_id][0] == "AI Channel"
+    assert feeds[channel_id][1][0].video_id == "video-1"
+    assert feeds[channel_id][1][0].video_url == "https://www.youtube.com/watch?v=video-1"
+    assert feeds[channel_id][1][0].title == "New lesson"
+
+
+def test_data_api_requires_key(monkeypatch) -> None:
+    monkeypatch.delenv("YOUTUBE_DATA_API_KEY", raising=False)
+
+    try:
+        YouTubeDataClient.from_environment()
+    except YouTubeChannelError as exc:
+        assert "YOUTUBE_DATA_API_KEY" in str(exc)
+    else:
+        raise AssertionError("expected missing API key to fail")
 
 
 def test_resolve_youtube_channel_uses_external_id_fallback(monkeypatch) -> None:

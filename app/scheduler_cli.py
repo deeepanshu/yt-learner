@@ -10,6 +10,7 @@ from app.job_queue import JobQueue
 from app.scheduler import ChannelScheduler
 from app.storage import OutputStore
 from app.telemetry import NoopTelemetry, configure_logging, configure_telemetry
+from app.youtube_channels import fetch_channel_feeds
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ async def run_scheduler_once(telemetry=None) -> int:
         watch_repository=watch_repository,
         queue=queue,
         store=store,
+        batch_feed_fetcher=fetch_channel_feeds,
     )
     started = time.perf_counter()
     try:

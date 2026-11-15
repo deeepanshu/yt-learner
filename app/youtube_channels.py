@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import html
+import json
 import logging
+import os
 import re
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
+from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from app.youtube_urls import parse_youtube_url
 
-YOUTUBE_FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
-ATOM_NAMESPACE = {"atom": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015"}
+YOUTUBE_DATA_API_BASE_URL = "https://www.googleapis.com/youtube/v3"
+YOUTUBE_DATA_API_KEY_ENV = "YOUTUBE_DATA_API_KEY"
 CHANNEL_ID_PATTERN = re.compile(r'"channelId":"(UC[\w-]{20,})"')
 TITLE_META_PATTERN = re.compile(r'<meta\s+property="og:title"\s+content="([^"]+)"', re.IGNORECASE)
 TITLE_TAG_PATTERN = re.compile(r"<title>([^<]+)</title>", re.IGNORECASE)
@@ -40,43 +42,136 @@ class ChannelFeedVideo:
     published_at: datetime | None
 
 
-def fetch_channel_feed(channel_id: str) -> tuple[str, list[ChannelFeedVideo]]:
-    request_url = YOUTUBE_FEED_URL.format(channel_id=channel_id)
-    LOGGER.info("youtube_feed_fetch_started channel_id=%s url=%s", channel_id, request_url)
-    try:
-        with urlopen(request_url, timeout=10) as response:
-            payload = response.read()
-    except Exception as exc:
-        LOGGER.warning("youtube_feed_fetch_failed channel_id=%s url=%s error=%s", channel_id, request_url, exc)
-        raise YouTubeChannelError("Unable to fetch YouTube channel feed") from exc
+class YouTubeDataClient:
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key.strip()
+        if not self.api_key:
+            raise YouTubeChannelError(f"{YOUTUBE_DATA_API_KEY_ENV} is required for channel discovery")
 
-    try:
-        root = ET.fromstring(payload)
-    except ET.ParseError as exc:
-        raise YouTubeChannelError("Unable to parse YouTube channel feed") from exc
+    @classmethod
+    def from_environment(cls) -> YouTubeDataClient:
+        return cls(os.getenv(YOUTUBE_DATA_API_KEY_ENV, ""))
 
-    title_text = root.findtext("atom:title", namespaces=ATOM_NAMESPACE) or channel_id
-    videos: list[ChannelFeedVideo] = []
-    for entry in root.findall("atom:entry", ATOM_NAMESPACE):
-        video_id = (entry.findtext("yt:videoId", namespaces=ATOM_NAMESPACE) or "").strip()
-        link = entry.find("atom:link", ATOM_NAMESPACE)
-        video_url = ""
-        if link is not None:
-            video_url = str(link.attrib.get("href", "")).strip()
-        if not video_id or not video_url:
-            continue
-        title = (entry.findtext("atom:title", namespaces=ATOM_NAMESPACE) or video_id).strip()
-        published_at = _parse_feed_datetime(entry.findtext("atom:published", namespaces=ATOM_NAMESPACE))
-        videos.append(
-            ChannelFeedVideo(
-                video_id=video_id,
-                title=title,
-                video_url=parse_youtube_url(video_url).canonical_url,
-                published_at=published_at,
-            )
+    def fetch_channel_feeds(
+        self, channel_ids: list[str]
+    ) -> dict[str, tuple[str, list[ChannelFeedVideo]]]:
+        unique_channel_ids = list(dict.fromkeys(channel_ids))
+        if not unique_channel_ids:
+            return {}
+
+        response = self._request_json(
+            "channels",
+            {
+                "part": "snippet,contentDetails",
+                "id": ",".join(unique_channel_ids),
+            },
         )
-    LOGGER.info("youtube_feed_fetch_succeeded channel_id=%s video_count=%s title=%r", channel_id, len(videos), title_text.strip() or channel_id)
-    return title_text.strip() or channel_id, videos
+        channels_by_id = {
+            str(resource.get("id", "")): resource
+            for resource in response.get("items", [])
+            if isinstance(resource, dict) and resource.get("id")
+        }
+        feeds: dict[str, tuple[str, list[ChannelFeedVideo]]] = {}
+        for channel_id in unique_channel_ids:
+            resource = channels_by_id.get(channel_id)
+            if resource is None:
+                LOGGER.warning("youtube_api_channel_not_found channel_id=%s", channel_id)
+                continue
+            try:
+                feeds[channel_id] = self._fetch_uploads(resource, channel_id=channel_id)
+            except YouTubeChannelError:
+                LOGGER.exception("youtube_api_uploads_fetch_failed channel_id=%s", channel_id)
+        return feeds
+
+    def fetch_channel_feed(self, channel_id: str) -> tuple[str, list[ChannelFeedVideo]]:
+        feeds = self.fetch_channel_feeds([channel_id])
+        feed = feeds.get(channel_id)
+        if feed is None:
+            raise YouTubeChannelError(f"Unable to fetch YouTube channel {channel_id}")
+        return feed
+
+    def _fetch_uploads(
+        self, resource: dict[str, object], *, channel_id: str
+    ) -> tuple[str, list[ChannelFeedVideo]]:
+        snippet = resource.get("snippet")
+        content_details = resource.get("contentDetails")
+        if not isinstance(snippet, dict) or not isinstance(content_details, dict):
+            raise YouTubeChannelError(f"YouTube API returned incomplete channel data for {channel_id}")
+        related_playlists = content_details.get("relatedPlaylists")
+        if not isinstance(related_playlists, dict):
+            raise YouTubeChannelError(f"YouTube API returned no uploads playlist for {channel_id}")
+        uploads_playlist_id = str(related_playlists.get("uploads", "")).strip()
+        if not uploads_playlist_id:
+            raise YouTubeChannelError(f"YouTube API returned no uploads playlist for {channel_id}")
+
+        response = self._request_json(
+            "playlistItems",
+            {
+                "part": "snippet,contentDetails",
+                "playlistId": uploads_playlist_id,
+                "maxResults": "50",
+            },
+        )
+        videos: list[ChannelFeedVideo] = []
+        for item in response.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            item_snippet = item.get("snippet")
+            item_content_details = item.get("contentDetails")
+            if not isinstance(item_snippet, dict) or not isinstance(item_content_details, dict):
+                continue
+            video_id = str(item_content_details.get("videoId", "")).strip()
+            if not video_id:
+                continue
+            title = str(item_snippet.get("title", "")).strip() or video_id
+            published_at = _parse_video_datetime(
+                str(
+                    item_content_details.get("videoPublishedAt")
+                    or item_snippet.get("publishedAt")
+                    or ""
+                )
+            )
+            videos.append(
+                ChannelFeedVideo(
+                    video_id=video_id,
+                    title=title,
+                    video_url=f"https://www.youtube.com/watch?v={video_id}",
+                    published_at=published_at,
+                )
+            )
+        title = str(snippet.get("title", "")).strip() or channel_id
+        LOGGER.info(
+            "youtube_api_channel_fetch_succeeded channel_id=%s video_count=%s title=%r",
+            channel_id,
+            len(videos),
+            title,
+        )
+        return title, videos
+
+    def _request_json(self, resource: str, params: dict[str, str]) -> dict[str, object]:
+        request_url = f"{YOUTUBE_DATA_API_BASE_URL}/{resource}?{urlencode({**params, 'key': self.api_key})}"
+        try:
+            with urlopen(request_url, timeout=10) as response:
+                payload = json.loads(response.read())
+        except HTTPError as exc:
+            LOGGER.warning("youtube_api_request_failed resource=%s status=%s", resource, exc.code)
+            raise YouTubeChannelError(f"YouTube API request failed for {resource}") from exc
+        except (OSError, TypeError, ValueError) as exc:
+            LOGGER.warning("youtube_api_request_failed resource=%s error=%s", resource, exc)
+            raise YouTubeChannelError(f"Unable to fetch YouTube API resource {resource}") from exc
+        if not isinstance(payload, dict):
+            raise YouTubeChannelError(f"YouTube API returned invalid data for {resource}")
+        return payload
+
+
+def fetch_channel_feeds(
+    channel_ids: list[str],
+) -> dict[str, tuple[str, list[ChannelFeedVideo]]]:
+    return YouTubeDataClient.from_environment().fetch_channel_feeds(channel_ids)
+
+
+def fetch_channel_feed(channel_id: str) -> tuple[str, list[ChannelFeedVideo]]:
+    return YouTubeDataClient.from_environment().fetch_channel_feed(channel_id)
 
 
 def resolve_youtube_channel(reference: str) -> ResolvedYouTubeChannel:
@@ -168,7 +263,7 @@ def _looks_like_channel_id(value: str) -> bool:
     return bool(re.fullmatch(r"UC[\w-]{20,}", value))
 
 
-def _parse_feed_datetime(value: str | None) -> datetime | None:
+def _parse_video_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
     try:

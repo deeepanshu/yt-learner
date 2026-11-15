@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.channel_watches import WatchRepository, WatchedChannel
 from app.job_queue import JobQueue
 from app.storage import OutputStore
-from app.youtube_channels import ChannelFeedVideo, YouTubeChannelError, fetch_channel_feed
+from app.youtube_channels import ChannelFeedVideo, YouTubeChannelError, fetch_channel_feed, fetch_channel_feeds
 
 LOGGER = logging.getLogger(__name__)
 SCHEDULER_REQUESTED_BY = "youtube-channel-scheduler"
 SCHEDULER_SOURCE = "youtube_channel_scheduler"
+Feed = tuple[str, list[ChannelFeedVideo]]
+FeedFetcher = Callable[[str], Feed]
+BatchFeedFetcher = Callable[[list[str]], dict[str, Feed]]
 
 
 @dataclass(frozen=True)
@@ -27,26 +31,25 @@ class ChannelScheduler:
         watch_repository: WatchRepository,
         queue: JobQueue,
         store: OutputStore,
-        feed_fetcher=fetch_channel_feed,
+        feed_fetcher: FeedFetcher = fetch_channel_feed,
+        batch_feed_fetcher: BatchFeedFetcher | None = None,
     ) -> None:
         self.watch_repository = watch_repository
         self.queue = queue
         self.store = store
         self.feed_fetcher = feed_fetcher
+        self.batch_feed_fetcher = batch_feed_fetcher
 
     async def poll_once(self) -> SchedulerPollResult:
         result = SchedulerPollResult()
         subscriptions = self.watch_repository.get_active_subscriptions()
         LOGGER.info("scheduler_poll_started subscription_count=%s", len(subscriptions))
+        feeds_by_channel = self._fetch_feeds(subscriptions)
         for subscription in subscriptions:
-            try:
-                _, videos = self.feed_fetcher(subscription.youtube_channel_id)
-            except YouTubeChannelError:
-                LOGGER.exception(
-                    "Unable to poll watched YouTube channel %s",
-                    subscription.youtube_channel_id,
-                )
+            feed = feeds_by_channel.get(subscription.youtube_channel_id)
+            if feed is None:
                 continue
+            _, videos = feed
             result = self._poll_subscription(subscription, videos, result)
         LOGGER.info(
             "scheduler_poll_finished subscriptions_polled=%s videos_seen=%s jobs_enqueued=%s",
@@ -55,6 +58,26 @@ class ChannelScheduler:
             result.jobs_enqueued,
         )
         return result
+
+    def _fetch_feeds(self, subscriptions: list[WatchedChannel]) -> dict[str, Feed]:
+        channel_ids = [subscription.youtube_channel_id for subscription in subscriptions]
+        if self.batch_feed_fetcher is not None:
+            try:
+                return self.batch_feed_fetcher(channel_ids)
+            except YouTubeChannelError:
+                LOGGER.exception("Unable to poll watched YouTube channels")
+                return {}
+
+        feeds: dict[str, Feed] = {}
+        for subscription in subscriptions:
+            try:
+                feeds[subscription.youtube_channel_id] = self.feed_fetcher(subscription.youtube_channel_id)
+            except YouTubeChannelError:
+                LOGGER.exception(
+                    "Unable to poll watched YouTube channel %s",
+                    subscription.youtube_channel_id,
+                )
+        return feeds
 
     def _poll_subscription(
         self,
